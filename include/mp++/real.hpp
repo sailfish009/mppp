@@ -557,7 +557,7 @@ enum class real_kind : std::underlying_type<::mpfr_kind_t>::type {
  *    r3.abs();     // Member function abs(): replaces the value of r3 with its
  *                  // absolute value.
  *
- * Note that at this time only a small subset of the MPFR API has been wrapped by :cpp:class:`~mppp::real`.
+ * Note that at this time a subset of the MPFR API has been wrapped by :cpp:class:`~mppp::real`.
  *
  * Various :ref:`overloaded operators <real_operators>` are provided. The arithmetic operators always return
  * a :cpp:class:`~mppp::real` result. The relational operators, ``==``, ``!=``, ``<``, ``>``, ``<=`` and ``>=`` will
@@ -1702,6 +1702,14 @@ public:
     {
         return mpfr_zero_p(&m_mpfr) != 0;
     }
+    /// Detect zero.
+    /**
+     * @return \p true if \p this is zero, \p false otherwise.
+     */
+    bool is_zero() const
+    {
+        return zero_p();
+    }
     /// Detect regular number.
     /**
      * @return \p true if \p this is a regular number (i.e., not NaN, infinity or zero), \p false otherwise.
@@ -1918,7 +1926,8 @@ private:
     }
     // Small helper to raise an exception when converting to C++ integrals.
     template <typename T>
-    [[noreturn]] void raise_overflow_error() const {
+    [[noreturn]] void raise_overflow_error() const
+    {
         throw std::overflow_error("Conversion of the real " + to_string() + " to the type '" + demangle<T>()
                                   + "' results in overflow");
     }
@@ -3104,6 +3113,17 @@ inline bool number_p(const real &r)
 inline bool zero_p(const real &r)
 {
     return r.zero_p();
+}
+
+/// Detect if a \link mppp::real real\endlink is zero.
+/**
+ * @param r the \link mppp::real real\endlink that will be examined.
+ *
+ * @return \p true if \p r is zero, \p false otherwise.
+ */
+inline bool is_zero(const real &r)
+{
+    return r.is_zero();
 }
 
 /// Detect if a \link mppp::real real\endlink is a regular number.
