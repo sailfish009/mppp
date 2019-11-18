@@ -1,4 +1,4 @@
-// Copyright 2016-2018 Francesco Biscani (bluescarni@gmail.com)
+// Copyright 2016-2019 Francesco Biscani (bluescarni@gmail.com)
 //
 // This file is part of the mp++ library.
 //
@@ -15,10 +15,8 @@
 
 #include <mp++/integer.hpp>
 
-#include "test_utils.hpp"
-
-#define CATCH_CONFIG_MAIN
 #include "catch.hpp"
+#include "test_utils.hpp"
 
 static int ntries = 1000;
 
@@ -37,7 +35,7 @@ struct add_tester {
     {
         using integer = integer<S::value>;
         // Start with all zeroes.
-        mpz_raii m1, m2, m3;
+        detail::mpz_raii m1, m2, m3;
         integer n1, n2, n3;
         REQUIRE(&add(n1, n2, n3) == &n1);
         ::mpz_add(&m1.m_mpz, &m2.m_mpz, &m3.m_mpz);
@@ -45,7 +43,7 @@ struct add_tester {
         REQUIRE(n1.is_static());
         REQUIRE(n2.is_static());
         REQUIRE(n3.is_static());
-        mpz_raii tmp;
+        detail::mpz_raii tmp;
         std::uniform_int_distribution<int> sdist(0, 1);
         // Run a variety of tests with operands with x and y number of limbs.
         auto random_xy = [&](unsigned x, unsigned y) {
@@ -299,7 +297,7 @@ struct sub_tester {
     {
         using integer = integer<S::value>;
         // Start with all zeroes.
-        mpz_raii m1, m2, m3;
+        detail::mpz_raii m1, m2, m3;
         integer n1, n2, n3;
         REQUIRE(&sub(n1, n2, n3) == &n1);
         ::mpz_sub(&m1.m_mpz, &m2.m_mpz, &m3.m_mpz);
@@ -307,7 +305,7 @@ struct sub_tester {
         REQUIRE(n1.is_static());
         REQUIRE(n2.is_static());
         REQUIRE(n3.is_static());
-        mpz_raii tmp;
+        detail::mpz_raii tmp;
         std::uniform_int_distribution<int> sdist(0, 1);
         // Run a variety of tests with operands with x and y number of limbs.
         auto random_xy = [&](unsigned x, unsigned y) {
@@ -534,7 +532,7 @@ struct mul_tester {
     {
         using integer = integer<S::value>;
         // Start with zeroes.
-        mpz_raii m1, m2, m3;
+        detail::mpz_raii m1, m2, m3;
         integer n1, n2, n3;
         REQUIRE(&mul(n1, n2, n3) == &n1);
         ::mpz_mul(&m1.m_mpz, &m2.m_mpz, &m3.m_mpz);
@@ -556,7 +554,7 @@ struct mul_tester {
         REQUIRE(n1.is_static());
         REQUIRE(n2.is_static());
         REQUIRE(n3.is_static());
-        mpz_raii tmp;
+        detail::mpz_raii tmp;
         std::uniform_int_distribution<int> sdist(0, 1);
         // Run a variety of tests with operands with x and y number of limbs.
         auto random_xy = [&](unsigned x, unsigned y) {
@@ -741,7 +739,7 @@ struct addmul_tester {
     {
         using integer = integer<S::value>;
         // Start with zeroes.
-        mpz_raii m1, m2, m3;
+        detail::mpz_raii m1, m2, m3;
         integer n1, n2, n3;
         REQUIRE(&addmul(n1, n2, n3) == &n1);
         ::mpz_addmul(&m1.m_mpz, &m2.m_mpz, &m3.m_mpz);
@@ -763,7 +761,7 @@ struct addmul_tester {
         REQUIRE(n1.is_static());
         REQUIRE(n2.is_static());
         REQUIRE(n3.is_static());
-        mpz_raii tmp;
+        detail::mpz_raii tmp;
         std::uniform_int_distribution<int> sdist(0, 1);
         // Run a variety of tests with operands with x and y number of limbs.
         auto random_xy = [&](unsigned x, unsigned y) {
@@ -1025,7 +1023,7 @@ struct submul_tester {
     {
         using integer = integer<S::value>;
         // Start with zeroes.
-        mpz_raii m1, m2, m3;
+        detail::mpz_raii m1, m2, m3;
         integer n1, n2, n3;
         REQUIRE(&submul(n1, n2, n3) == &n1);
         ::mpz_submul(&m1.m_mpz, &m2.m_mpz, &m3.m_mpz);
@@ -1047,7 +1045,7 @@ struct submul_tester {
         REQUIRE(n1.is_static());
         REQUIRE(n2.is_static());
         REQUIRE(n3.is_static());
-        mpz_raii tmp;
+        detail::mpz_raii tmp;
         std::uniform_int_distribution<int> sdist(0, 1);
         // Run a variety of tests with operands with x and y number of limbs.
         auto random_xy = [&](unsigned x, unsigned y) {
@@ -1309,7 +1307,7 @@ struct div_tester {
     inline void operator()(const S &) const
     {
         using integer = integer<S::value>;
-        mpz_raii m1, m2, m3, m4;
+        detail::mpz_raii m1, m2, m3, m4;
         integer n1, n2, n3, n4;
         // A few simple tests to start.
         n3 = integer(12);
@@ -1339,7 +1337,7 @@ struct div_tester {
         REQUIRE((lex_cast(n1) == lex_cast(m1)));
         REQUIRE((lex_cast(n2) == lex_cast(m2)));
         // Random testing.
-        mpz_raii tmp;
+        detail::mpz_raii tmp;
         std::uniform_int_distribution<int> sdist(0, 1);
         auto random_xy = [&](unsigned x, unsigned y) {
             for (int i = 0; i < ntries; ++i) {
@@ -1463,7 +1461,7 @@ struct lshift_tester {
     {
         using integer = integer<S::value>;
         // A few zero tests to start.
-        mpz_raii m1, m2;
+        detail::mpz_raii m1, m2;
         integer n1, n2;
         REQUIRE(&mul_2exp(n1, n2, 0u) == &n1);
         ::mpz_mul_2exp(&m1.m_mpz, &m2.m_mpz, 0u);
@@ -1495,7 +1493,7 @@ struct lshift_tester {
         ::mpz_mul_2exp(&m1.m_mpz, &m2.m_mpz, 2u);
         REQUIRE((lex_cast(n1) == lex_cast(m1)));
         // Random testing.
-        mpz_raii tmp;
+        detail::mpz_raii tmp;
         std::uniform_int_distribution<int> sdist(0, 1);
         auto random_x = [&](unsigned x) {
             for (int i = 0; i < ntries; ++i) {
@@ -1758,7 +1756,7 @@ struct rshift_tester {
     {
         using integer = integer<S::value>;
         // A few zero tests to start.
-        mpz_raii m1, m2;
+        detail::mpz_raii m1, m2;
         integer n1, n2;
         REQUIRE(&tdiv_q_2exp(n1, n2, 0u) == &n1);
         ::mpz_tdiv_q_2exp(&m1.m_mpz, &m2.m_mpz, 0u);
@@ -1790,7 +1788,7 @@ struct rshift_tester {
         ::mpz_tdiv_q_2exp(&m1.m_mpz, &m2.m_mpz, 2u);
         REQUIRE((lex_cast(n1) == lex_cast(m1)));
         // Random testing.
-        mpz_raii tmp;
+        detail::mpz_raii tmp;
         std::uniform_int_distribution<int> sdist(0, 1);
         auto random_x = [&](unsigned x) {
             for (int i = 0; i < ntries; ++i) {

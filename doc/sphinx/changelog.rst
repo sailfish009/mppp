@@ -1,17 +1,173 @@
 Changelog
 =========
 
-0.13 (unreleased)
+0.18 (unreleased)
 -----------------
 
 New
 ~~~
 
-- Introduce additional function overloads for :cpp:class:`~mppp::real` (`#159 <https://github.com/bluescarni/mppp/pull/159>`__).
+- Include mp++'s headers in the project files generated
+  for MSVC (`#199 <https://github.com/bluescarni/mppp/pull/199>`__).
+  Many thanks to `7ofNine <https://github.com/7ofNine>`__!
 
 Changes
 ~~~~~~~
 
+- Continue moving code into the compiled library
+  (`#204 <https://github.com/bluescarni/mppp/pull/204>`__).
+- Enable the C++20 concept declaration syntax if GCC >= 9 is
+  being used
+  (`#203 <https://github.com/bluescarni/mppp/pull/203>`__).
+- Update the internal copy of Catch to the latest version, 2.10.2
+  (`#203 <https://github.com/bluescarni/mppp/pull/203>`__).
+
+Fix
+~~~
+
+- Various build system and documentation improvements
+  (`#200 <https://github.com/bluescarni/mppp/pull/200>`__,
+  `#202 <https://github.com/bluescarni/mppp/pull/202>`__).
+
+0.17 (13-09-2019)
+-----------------
+
+New
+~~~
+
+- mp++'s concepts are now compatible with the C++20
+  concepts proposal (`#196 <https://github.com/bluescarni/mppp/pull/196>`__,
+  `#198 <https://github.com/bluescarni/mppp/pull/198>`__).
+  Many thanks to `7ofNine <https://github.com/7ofNine>`__!
+- Expose most of the missing special functions from the MPFR API
+  for :cpp:class:`~mppp::real`
+  (`#190 <https://github.com/bluescarni/mppp/pull/190>`__,
+  `#192 <https://github.com/bluescarni/mppp/pull/192>`__,
+  `#194 <https://github.com/bluescarni/mppp/pull/194>`__).
+
+Changes
+~~~~~~~
+
+- On MSVC, use the ``WIN32_LEAN_AND_MEAN`` definition
+  (`#198 <https://github.com/bluescarni/mppp/pull/198>`__).
+- Update the internal copy of Catch to the latest version, 2.9.2
+  (`#197 <https://github.com/bluescarni/mppp/pull/197>`__).
+- Drastically reduce the build time of the test suite by separately
+  compiling the Catch main function
+  (`#197 <https://github.com/bluescarni/mppp/pull/197>`__).
+
+Fix
+~~~
+
+- Workaround a constexpr issue involving :cpp:class:`~mppp::real128`
+  in GCC 9
+  (`#197 <https://github.com/bluescarni/mppp/pull/197>`__).
+- Fix C++17 builds with MSVC 2015
+  (`#191 <https://github.com/bluescarni/mppp/pull/191>`__).
+
+0.16 (25-05-2019)
+-----------------
+
+Fix
+~~~
+
+- Properly set the version numbers for the mp++ dynamic library
+  (`#187 <https://github.com/bluescarni/mppp/pull/187>`__).
+
+0.15 (24-05-2019)
+-----------------
+
+New
+~~~
+
+- Expose the hyperbolic functions from the MPFR API
+  for :cpp:class:`~mppp::real`
+  (`#184 <https://github.com/bluescarni/mppp/pull/184>`__).
+- Add the possibility of generating Unicode MSVC solutions
+  (`#183 <https://github.com/bluescarni/mppp/pull/183>`__).
+- Finish exposing all the trigonometric functions from the MPFR API
+  for :cpp:class:`~mppp::real`
+  (`#180 <https://github.com/bluescarni/mppp/pull/180>`__).
+- Add the possibility to build mp++ as a static library
+  (`#176 <https://github.com/bluescarni/mppp/pull/176>`__).
+- Add CircleCI to the continuous integration pipeline
+  (`#173 <https://github.com/bluescarni/mppp/pull/173>`__).
+- Implement the logarithm/exponential functions for :cpp:class:`~mppp::real`
+  (`#172 <https://github.com/bluescarni/mppp/pull/172>`__).
+
+Changes
+~~~~~~~
+
+- When compiled with MPFR version 4 or later, mp++ now ensures that
+  thread-local and global caches are freed separately at thread exit
+  and program shutdown
+  (`#182 <https://github.com/bluescarni/mppp/pull/182>`__).
+- Update the internal copy of Catch to the latest version, 2.7.2
+  (`#181 <https://github.com/bluescarni/mppp/pull/181>`__).
+- The MPFR cleanup function ``mpfr_free_cache()`` is now called
+  at the end of every thread which creates at least
+  one :cpp:class:`~mppp::real` object
+  (`#180 <https://github.com/bluescarni/mppp/pull/180>`__).
+- Implement a specialised version of the ``swap()`` primitive
+  for :cpp:class:`~mppp::integer` and
+  :cpp:class:`~mppp::rational` (`#174 <https://github.com/bluescarni/mppp/pull/174>`__).
+- Improve the implementation of the less than/greater than operators for
+  :cpp:class:`~mppp::integer`. Together with the ``swap()`` improvements,
+  this change leads to a ~9% decrease in runtime for the
+  ``integer1_sort_signed``
+  benchmark (`#174 <https://github.com/bluescarni/mppp/pull/174>`__).
+- Continue moving code from the headers into the compiled library (`#170 <https://github.com/bluescarni/mppp/pull/170>`__,
+  `#172 <https://github.com/bluescarni/mppp/pull/172>`__).
+
+Fix
+~~~
+
+- Fix two race conditions in the testing code
+  (`#181 <https://github.com/bluescarni/mppp/pull/181>`__).
+- The :cpp:class:`~mppp::zero_division_error` exception is now correctly
+  marked as visible
+  (`#180 <https://github.com/bluescarni/mppp/pull/180>`__).
+- Add a workaround for a ``clang-cl`` bug (`#179 <https://github.com/bluescarni/mppp/pull/179>`__).
+- Various build system and documentation improvements (`#172 <https://github.com/bluescarni/mppp/pull/172>`__).
+- Fix a warning when building mp++ with older MSVC versions (`#170 <https://github.com/bluescarni/mppp/pull/170>`__).
+
+0.14 (2019-04-11)
+-----------------
+
+New
+~~~
+
+- The :cpp:func:`~mppp::type_name()` function is now part of the public API
+  (`#169 <https://github.com/bluescarni/mppp/pull/169>`__).
+- :cpp:class:`~mppp::integer` and :cpp:class:`~mppp::rational` now respect the format
+  flags in output streams (`#161 <https://github.com/bluescarni/mppp/pull/161>`__).
+
+Changes
+~~~~~~~
+
+- mp++ does not depend on the DbgHelp library on Windows any more
+  (`#169 <https://github.com/bluescarni/mppp/pull/169>`__).
+- **BREAKING**: mp++ has now a compiled component. In order to use mp++, you will now have to
+  both include the mp++ headers **and** link to the mp++ library
+  (`#169 <https://github.com/bluescarni/mppp/pull/169>`__).
+- Various improvements to the benchmarks (`#166 <https://github.com/bluescarni/mppp/pull/166>`__).
+- **BREAKING**: the input stream operators have been removed from all classes
+  (`#161 <https://github.com/bluescarni/mppp/pull/161>`__).
+
+Fix
+~~~
+
+- Fix an issue in the build system when compiling the unit tests in release mode with MSVC (`#164 <https://github.com/bluescarni/mppp/pull/164>`__).
+- Fixes for the demangler on OSX when 128-bit integers are involved (`#163 <https://github.com/bluescarni/mppp/pull/163>`__).
+- Fix a build issue on OSX when the compiler is not Xcode (`#161 <https://github.com/bluescarni/mppp/pull/161>`__).
+
+0.13 (2019-03-13)
+-----------------
+
+Changes
+~~~~~~~
+
+- Update copyright date (`#162 <https://github.com/bluescarni/mppp/pull/162>`__).
 - Add a tutorial for :cpp:class:`~mppp::real128` (`#160 <https://github.com/bluescarni/mppp/pull/160>`__).
 - Various build system improvements (`#159 <https://github.com/bluescarni/mppp/pull/159>`__).
 - Update the internal copy of Catch to the latest version, 2.5.0 (`#158 <https://github.com/bluescarni/mppp/pull/158>`__).
@@ -19,6 +175,9 @@ Changes
 Fix
 ~~~
 
+- Fix a compilation error when using booleans as second arguments in the ``pow()`` and ``binomial()`` overloads of :cpp:class:`~mppp::integer`
+  (`#162 <https://github.com/bluescarni/mppp/pull/162>`__).
+- Work around a compilation error on MSVC when using C++17 (`#162 <https://github.com/bluescarni/mppp/pull/162>`__).
 - Various documentation fixes (`#160 <https://github.com/bluescarni/mppp/pull/160>`__).
 
 0.12 (2018-10-11)

@@ -1,4 +1,4 @@
-// Copyright 2016-2018 Francesco Biscani (bluescarni@gmail.com)
+// Copyright 2016-2019 Francesco Biscani (bluescarni@gmail.com)
 //
 // This file is part of the mp++ library.
 //
@@ -7,18 +7,17 @@
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 #include <cstddef>
-#include <gmp.h>
 #include <stdexcept>
 #include <string>
 #include <tuple>
 #include <type_traits>
 
+#include <gmp.h>
+
 #include <mp++/integer.hpp>
 
-#include "test_utils.hpp"
-
-#define CATCH_CONFIG_MAIN
 #include "catch.hpp"
+#include "test_utils.hpp"
 
 using namespace mppp;
 using namespace mppp_test;
@@ -32,7 +31,7 @@ struct probab_prime_p_tester {
     inline void operator()(const S &) const
     {
         using integer = integer<S::value>;
-        mpz_raii m1;
+        detail::mpz_raii m1;
         integer n1;
         REQUIRE((probab_prime_p(n1) == ::mpz_probab_prime_p(&m1.m_mpz, 25)));
         REQUIRE((n1.probab_prime_p() == ::mpz_probab_prime_p(&m1.m_mpz, 25)));

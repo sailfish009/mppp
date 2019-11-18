@@ -1,4 +1,4 @@
-// Copyright 2016-2018 Francesco Biscani (bluescarni@gmail.com)
+// Copyright 2016-2019 Francesco Biscani (bluescarni@gmail.com)
 //
 // This file is part of the mp++ library.
 //
@@ -7,20 +7,19 @@
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 #include <cstddef>
-#include <gmp.h>
 #include <limits>
 #include <random>
 #include <stdexcept>
 #include <tuple>
 #include <type_traits>
 
+#include <gmp.h>
+
 #include <mp++/config.hpp>
 #include <mp++/integer.hpp>
 
-#include "test_utils.hpp"
-
-#define CATCH_CONFIG_MAIN
 #include "catch.hpp"
+#include "test_utils.hpp"
 
 static int ntries = 1000;
 
@@ -39,7 +38,7 @@ struct bin_tester {
     {
         using integer = integer<S::value>;
         // Start with all zeroes.
-        mpz_raii m1, m2;
+        detail::mpz_raii m1, m2;
         integer n1, n2;
         ::mpz_bin_ui(&m1.m_mpz, &m2.m_mpz, 0u);
         REQUIRE(&bin_ui(n1, n2, 0) == &n1);
@@ -106,6 +105,8 @@ struct binomial_tester {
         int_type n;
         REQUIRE(binomial(n, 0) == 1);
         REQUIRE(binomial(n, 1) == 0);
+        REQUIRE(binomial(n, false) == 1);
+        REQUIRE(binomial(n, true) == 0);
         n = 1;
         REQUIRE(binomial(n, 1) == 1);
         n = 5;
@@ -115,7 +116,7 @@ struct binomial_tester {
         // Random tests.
         std::uniform_int_distribution<int> ud(-1000, 1000);
         std::uniform_int_distribution<int> promote_dist(0, 1);
-        mpz_raii m;
+        detail::mpz_raii m;
         for (int i = 0; i < ntries; ++i) {
             auto tmp1 = ud(rng), tmp2 = ud(rng);
             n = tmp1;

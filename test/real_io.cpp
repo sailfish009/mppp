@@ -1,4 +1,4 @@
-// Copyright 2016-2018 Francesco Biscani (bluescarni@gmail.com)
+// Copyright 2016-2019 Francesco Biscani (bluescarni@gmail.com)
 //
 // This file is part of the mp++ library.
 //
@@ -9,11 +9,6 @@
 #include <mp++/config.hpp>
 
 #include <limits>
-#include <mp++/detail/mpfr.hpp>
-#include <mp++/detail/type_traits.hpp>
-#include <mp++/integer.hpp>
-#include <mp++/rational.hpp>
-#include <mp++/real.hpp>
 #include <random>
 #include <sstream>
 #include <stdexcept>
@@ -21,10 +16,14 @@
 #include <tuple>
 #include <type_traits>
 
-#include "test_utils.hpp"
+#include <mp++/detail/mpfr.hpp>
+#include <mp++/detail/type_traits.hpp>
+#include <mp++/integer.hpp>
+#include <mp++/rational.hpp>
+#include <mp++/real.hpp>
 
-#define CATCH_CONFIG_MAIN
 #include "catch.hpp"
+#include "test_utils.hpp"
 
 using namespace mppp;
 using namespace mppp_test;
@@ -120,14 +119,5 @@ TEST_CASE("real io")
         std::ostringstream oss;
         oss << real{123, 100};
         REQUIRE(::mpfr_equal_p(real{123, 100}.get_mpfr_t(), real{oss.str(), 100}.get_mpfr_t()));
-    }
-    {
-        std::stringstream iss;
-        iss.str("-1.1");
-        real_set_default_prec(110);
-        real r;
-        iss >> r;
-        real_reset_default_prec();
-        REQUIRE(::mpfr_equal_p(real{"-1.1", 110}.get_mpfr_t(), r.get_mpfr_t()));
     }
 }

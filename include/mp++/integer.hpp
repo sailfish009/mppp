@@ -1,4 +1,4 @@
-// Copyright 2016-2018 Francesco Biscani (bluescarni@gmail.com)
+// Copyright 2016-2019 Francesco Biscani (bluescarni@gmail.com)
 //
 // This file is part of the mp++ library.
 //
@@ -11,11 +11,12 @@
 
 #include <mp++/config.hpp>
 
+// NOTE: cinttypes comes from the std::abs() include mess:
+// http://en.cppreference.com/w/cpp/numeric/math/abs
+
 #include <algorithm>
 #include <array>
 #include <cassert>
-// NOTE: this comes from the std::abs() include mess:
-// http://en.cppreference.com/w/cpp/numeric/math/abs
 #include <cinttypes>
 #include <cmath>
 #include <cstddef>
@@ -29,24 +30,27 @@
 #include <new>
 #include <stdexcept>
 #include <string>
-#if MPPP_CPLUSPLUS >= 201703L
-#include <string_view>
-#endif
 #include <tuple>
 #include <type_traits>
 #include <utility>
 #include <vector>
 
+#if defined(MPPP_HAVE_STRING_VIEW)
+#include <string_view>
+#endif
+
 #include <mp++/concepts.hpp>
-#include <mp++/detail/demangle.hpp>
 #include <mp++/detail/fwd_decl.hpp>
 #include <mp++/detail/gmp.hpp>
+#include <mp++/detail/type_traits.hpp>
+#include <mp++/detail/utils.hpp>
+#include <mp++/detail/visibility.hpp>
+#include <mp++/exceptions.hpp>
+#include <mp++/type_name.hpp>
+
 #if defined(MPPP_WITH_MPFR)
 #include <mp++/detail/mpfr.hpp>
 #endif
-#include <mp++/detail/type_traits.hpp>
-#include <mp++/detail/utils.hpp>
-#include <mp++/exceptions.hpp>
 
 // Compiler configuration.
 // NOTE: check for MSVC first, as clang-cl does define both __clang__ and _MSC_VER,
@@ -89,60 +93,8 @@ namespace mppp
 // of integer from number of bits.
 enum class integer_bitcnt_t : ::mp_bitcnt_t {};
 
-inline namespace detail
+namespace detail
 {
-// Some misc tests to check that the mpz struct conforms to our expectations.
-// This is crucial for the implementation of the union integer type.
-struct expected_mpz_struct_t {
-    mpz_alloc_t _mp_alloc;
-    mpz_size_t _mp_size;
-    ::mp_limb_t *_mp_d;
-};
-
-static_assert(sizeof(expected_mpz_struct_t) == sizeof(mpz_struct_t) && std::is_standard_layout<mpz_struct_t>::value
-                  && std::is_standard_layout<expected_mpz_struct_t>::value && offsetof(mpz_struct_t, _mp_alloc) == 0u
-                  && offsetof(mpz_struct_t, _mp_size) == offsetof(expected_mpz_struct_t, _mp_size)
-                  && offsetof(mpz_struct_t, _mp_d) == offsetof(expected_mpz_struct_t, _mp_d)
-                  && std::is_same<::mp_limb_t *, decltype(std::declval<mpz_struct_t>()._mp_d)>::value &&
-                  // mp_bitcnt_t is used in shift operators, so we double-check it is an unsigned integral. If it is not
-                  // we might end up shifting by negative values, which is UB.
-                  std::is_integral<::mp_bitcnt_t>::value && std::is_unsigned<::mp_bitcnt_t>::value &&
-                  // The mpn functions accept sizes as ::mp_size_t, but we generally represent sizes as mpz_size_t.
-                  // We need then to make sure we can always cast safely mpz_size_t to ::mp_size_t. Inspection
-                  // of the gmp.h header seems to indicate that mpz_size_t is never larger than ::mp_size_t.
-                  // NOTE: since mp_size_t is the size type used by mpn functions, it is expected that it cannot
-                  // have smaller range than mpz_size_t, otherwise mpz_t would contain numbers too large to be
-                  // used as arguments in the mpn functions.
-                  nl_min<mpz_size_t>() >= nl_min<::mp_size_t>() && nl_max<mpz_size_t>() <= nl_max<::mp_size_t>(),
-              "Invalid mpz_t struct layout and/or GMP types.");
-
-#if MPPP_CPLUSPLUS >= 201703L
-
-// If we have C++17, we can use structured bindings to test the layout of mpz_struct_t
-// and its members' types.
-constexpr bool test_mpz_struct_t()
-{
-    // NOTE: if mpz_struct_t has more or fewer members, this will result
-    // in a compile-time error.
-    auto [alloc, size, ptr] = mpz_struct_t{};
-    (void)alloc;
-    (void)size;
-    (void)ptr;
-    return std::is_same<decltype(alloc), mpz_alloc_t>::value && std::is_same<decltype(size), mpz_size_t>::value
-           && std::is_same<decltype(ptr), ::mp_limb_t *>::value;
-}
-
-static_assert(test_mpz_struct_t(), "The mpz_struct_t does not have the expected layout.");
-
-#endif
-
-// The reason we are asserting this is the following: in a few places we are using the wrap-around property
-// of unsigned arithmetics, but if mp_limb_t is a narrow unsigned type (e.g., unsigned short or unsigned char)
-// then there could be a promotion to other types triggered by the standard integral promotions,
-// and the wrap around behaviour would not be there any more. This is just a theoretical concern at the moment.
-static_assert(disjunction<std::is_same<::mp_limb_t, unsigned long>, std::is_same<::mp_limb_t, unsigned long long>,
-                          std::is_same<::mp_limb_t, unsigned>>::value,
-              "Invalid type for mp_limb_t.");
 
 // Small helper to get the size in limbs from an mpz_t. Will return zero if n is zero.
 inline std::size_t get_mpz_size(const ::mpz_t n)
@@ -150,8 +102,20 @@ inline std::size_t get_mpz_size(const ::mpz_t n)
     return (n->_mp_size >= 0) ? static_cast<std::size_t>(n->_mp_size) : static_cast<std::size_t>(nint_abs(n->_mp_size));
 }
 
+#if defined(_MSC_VER) && defined(__clang__)
+
+// NOTE: clang-cl gives a deprecation warning
+// here due to the fact that the dllexported
+// cache class is missing a copy assignment
+// operator. Not sure what to make of it.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated"
+
+#endif
+
 // Structure for caching allocated arrays of limbs.
-struct mpz_alloc_cache {
+// NOTE: needs to be public for testing purposes.
+struct MPPP_DLL_PUBLIC mpz_alloc_cache {
     // Arrays up to this size will be cached.
     static constexpr std::size_t max_size = 10;
     // Max number of arrays to cache for each size.
@@ -163,122 +127,31 @@ struct mpz_alloc_cache {
     // NOTE: use round brackets init for the usual GCC 4.8 workaround.
     // NOTE: this will zero initialise recursively both members: we will
     // have all nullptrs in the caches, and all cache sizes will be zeroes.
-    mpz_alloc_cache() : caches(), sizes() {}
+    constexpr mpz_alloc_cache() : caches(), sizes() {}
     // Clear the cache, deallocating all the data in the arrays.
-    void clear() noexcept
-    {
-#if !defined(NDEBUG)
-        std::cout << "Cleaning up the mpz alloc cache." << std::endl;
-#endif
-        // Get the GMP free() function.
-        void (*ffp)(void *, std::size_t) = nullptr;
-        ::mp_get_memory_functions(nullptr, nullptr, &ffp);
-        assert(ffp != nullptr);
-        for (std::size_t i = 0; i < max_size; ++i) {
-            // Free all the limbs arrays allocated for this size.
-            for (std::size_t j = 0; j < sizes[i]; ++j) {
-                ffp(static_cast<void *>(caches[i][j]), i + 1u);
-            }
-            // Reset the number of limbs array present in this
-            // cache entry.
-            sizes[i] = 0u;
-        }
-    }
+    void clear() noexcept;
     ~mpz_alloc_cache()
     {
         clear();
     }
 };
 
+#if defined(_MSC_VER) && defined(__clang__)
+
+#pragma clang diagnostic pop
+
+#endif
+
 #if defined(MPPP_HAVE_THREAD_LOCAL)
 
-// Getter for the thread local allocation cache.
-// NOTE: static objects inside inline functions always refer to the same
-// object in different TUs:
-// https://stackoverflow.com/questions/32172137/local-static-thread-local-variables-of-inline-functions
-// NOTE: some link/notes regarding thread_local:
-// - thread_local alone also implies "static":
-//   http://eel.is/c++draft/dcl.stc
-//   https://stackoverflow.com/questions/22794382/are-c11-thread-local-variables-automatically-static
-// - all variables declared thread_local have "thread storage duration", that is,
-//   they live for the duration of the thread: http://eel.is/c++draft/basic.stc.thread
-// - there are 2 ways variables with thread storage duration may be initialised:
-//   - static initialisation, which is possible for constexpr-like entities:
-//     http://eel.is/c++draft/basic.start.static
-//     Note that it says: "Constant initialization is performed if a variable or temporary object with static or thread
-//     storage duration is initialized by a constant initializer for the entity". So it seems like block-scope
-//     variables with thread storage duration will be initialised as part of constant initialisation at thread startup,
-//     if possible. See also the cppreference page:
-//     https://en.cppreference.com/w/cpp/language/storage_duration#Static_local_variables
-//     (here it is talking about static local variables, but it should apply also to thread_local variables
-//     as indicated here: https://en.cppreference.com/w/cpp/language/initialization).
-//   - dynamic initialisation otherwise, meaning that the variable is initialised the first time control
-//     passes through its declaration:
-//     http://eel.is/c++draft/stmt.dcl#4
-// - destruction of objects with thread storage duration happens before the destruction of objects with
-//   static storage duration:
-//   http://eel.is/c++draft/basic.start.term#2
-// - "All static initialization strongly happens before any dynamic initialization.":
-//   http://eel.is/c++draft/basic.start#static-2
-// - "If the completion of the constructor or dynamic initialization of an object with thread storage duration is
-//   sequenced before that of another, the completion of the destructor of the second is sequenced before the initiation
-//   of the destructor of the first." (that is, objects are destroyed in reverse with respect to construction order):
-//   http://eel.is/c++draft/basic.start.term#3
-inline mpz_alloc_cache &get_mpz_alloc_cache()
-{
-    thread_local mpz_alloc_cache mpzc;
-    return mpzc;
-}
-
-// Implementation of the init of an mpz from cache.
-inline bool mpz_init_from_cache_impl(mpz_struct_t &rop, std::size_t nlimbs)
-{
-    auto &mpzc = get_mpz_alloc_cache();
-    if (nlimbs && nlimbs <= mpzc.max_size && mpzc.sizes[nlimbs - 1u]) {
-        // LCOV_EXCL_START
-        if (mppp_unlikely(nlimbs > make_unsigned(nl_max<mpz_alloc_t>()))) {
-            std::abort();
-        }
-        // LCOV_EXCL_STOP
-        const auto idx = nlimbs - 1u;
-        rop._mp_alloc = static_cast<mpz_alloc_t>(nlimbs);
-        rop._mp_size = 0;
-        rop._mp_d = mpzc.caches[idx][mpzc.sizes[idx] - 1u];
-        --mpzc.sizes[idx];
-        return true;
-    }
-    return false;
-}
+// Get a reference to the thread-local mpz allocation
+// cache. Used only for debugging.
+MPPP_DLL_PUBLIC mpz_alloc_cache &get_thread_local_mpz_cache();
 
 #endif
 
 // Helper function to init an mpz to zero with nlimbs preallocated limbs.
-inline void mpz_init_nlimbs(mpz_struct_t &rop, std::size_t nlimbs)
-{
-#if defined(MPPP_HAVE_THREAD_LOCAL)
-    if (!mpz_init_from_cache_impl(rop, nlimbs)) {
-#endif
-        // LCOV_EXCL_START
-        // A bit of horrid overflow checking.
-        if (mppp_unlikely(nlimbs > nl_max<std::size_t>() / unsigned(GMP_NUMB_BITS))) {
-            // NOTE: here we are doing what GMP does in case of memory allocation errors. It does not make much sense
-            // to do anything else, as long as GMP does not provide error recovery.
-            std::abort();
-        }
-        // LCOV_EXCL_STOP
-        const auto nbits = static_cast<std::size_t>(unsigned(GMP_NUMB_BITS) * nlimbs);
-        // LCOV_EXCL_START
-        if (mppp_unlikely(nbits > nl_max<::mp_bitcnt_t>())) {
-            std::abort();
-        }
-        // LCOV_EXCL_STOP
-        // NOTE: nbits == 0 is allowed.
-        ::mpz_init2(&rop, static_cast<::mp_bitcnt_t>(nbits));
-        assert(make_unsigned_t<mpz_alloc_t>(rop._mp_alloc) >= nlimbs);
-#if defined(MPPP_HAVE_THREAD_LOCAL)
-    }
-#endif
-}
+MPPP_DLL_PUBLIC void mpz_init_nlimbs(mpz_struct_t &, std::size_t);
 
 // Small helper to determine how many GMP limbs we need to fit nbits bits.
 constexpr ::mp_bitcnt_t nbits_to_nlimbs(::mp_bitcnt_t nbits)
@@ -289,38 +162,10 @@ constexpr ::mp_bitcnt_t nbits_to_nlimbs(::mp_bitcnt_t nbits)
 // Helper function to init an mpz to zero with enough space for nbits bits. The
 // nlimbs parameter must be consistent with the nbits parameter (it will be computed
 // outside this function).
-inline void mpz_init_nbits(mpz_struct_t &rop, ::mp_bitcnt_t nbits, std::size_t nlimbs)
-{
-    // Check nlimbs.
-    assert(nlimbs == nbits_to_nlimbs(nbits));
-#if defined(MPPP_HAVE_THREAD_LOCAL)
-    if (!mpz_init_from_cache_impl(rop, nlimbs)) {
-#endif
-        (void)nlimbs;
-        // NOTE: nbits == 0 is allowed.
-        ::mpz_init2(&rop, nbits);
-#if defined(MPPP_HAVE_THREAD_LOCAL)
-    }
-#endif
-}
+MPPP_DLL_PUBLIC void mpz_init_nbits(mpz_struct_t &, ::mp_bitcnt_t, std::size_t);
 
 // Thin wrapper around mpz_clear(): will add entry to cache if possible instead of clearing.
-inline void mpz_clear_wrap(mpz_struct_t &m)
-{
-#if defined(MPPP_HAVE_THREAD_LOCAL)
-    auto &mpzc = get_mpz_alloc_cache();
-    const auto ualloc = make_unsigned(m._mp_alloc);
-    if (ualloc && ualloc <= mpzc.max_size && mpzc.sizes[ualloc - 1u] < mpzc.max_entries) {
-        const auto idx = ualloc - 1u;
-        mpzc.caches[idx][mpzc.sizes[idx]] = m._mp_d;
-        ++mpzc.sizes[idx];
-    } else {
-#endif
-        ::mpz_clear(&m);
-#if defined(MPPP_HAVE_THREAD_LOCAL)
-    }
-#endif
-}
+MPPP_DLL_PUBLIC void mpz_clear_wrap(mpz_struct_t &);
 
 // Combined init+set.
 inline void mpz_init_set_nlimbs(mpz_struct_t &m0, const mpz_struct_t &m1)
@@ -330,28 +175,7 @@ inline void mpz_init_set_nlimbs(mpz_struct_t &m0, const mpz_struct_t &m1)
 }
 
 // Convert an mpz to a string in a specific base, to be written into out.
-inline void mpz_to_str(std::vector<char> &out, const mpz_struct_t *mpz, int base = 10)
-{
-    assert(base >= 2 && base <= 62);
-    const auto size_base = ::mpz_sizeinbase(mpz, base);
-    // LCOV_EXCL_START
-    if (mppp_unlikely(size_base > nl_max<std::size_t>() - 2u)) {
-        throw std::overflow_error("Too many digits in the conversion of mpz_t to string.");
-    }
-    // LCOV_EXCL_STOP
-    // Total max size is the size in base plus an optional sign and the null terminator.
-    const auto total_size = size_base + 2u;
-    // NOTE: possible improvement: use a null allocator to avoid initing the chars each time
-    // we resize up.
-    // Overflow check.
-    // LCOV_EXCL_START
-    if (mppp_unlikely(total_size > nl_max<std::vector<char>::size_type>())) {
-        throw std::overflow_error("Too many digits in the conversion of mpz_t to string.");
-    }
-    // LCOV_EXCL_STOP
-    out.resize(static_cast<std::vector<char>::size_type>(total_size));
-    ::mpz_get_str(out.data(), base, mpz);
-}
+MPPP_DLL_PUBLIC void mpz_to_str(std::vector<char> &, const mpz_struct_t *, int = 10);
 
 // Convenience overload for the above.
 inline std::string mpz_to_str(const mpz_struct_t *mpz, int base = 10)
@@ -447,23 +271,6 @@ inline unsigned limb_size_nbits(::mp_limb_t l)
 #endif
 }
 
-// This is a small utility function to shift down the unsigned integer n by GMP_NUMB_BITS.
-// If GMP_NUMB_BITS is not smaller than the bit size of T, then an assertion will fire. We need this
-// little helper in order to avoid compiler warnings.
-template <typename T, enable_if_t<(GMP_NUMB_BITS < nl_constants<T>::digits), int> = 0>
-inline void u_checked_rshift(T &n)
-{
-    static_assert(is_integral<T>::value && is_unsigned<T>::value, "Invalid type.");
-    n >>= GMP_NUMB_BITS;
-}
-
-template <typename T, enable_if_t<(GMP_NUMB_BITS >= nl_constants<T>::digits), int> = 0>
-inline void u_checked_rshift(T &)
-{
-    static_assert(is_integral<T>::value && is_unsigned<T>::value, "Invalid type.");
-    assert(false);
-}
-
 // Machinery for the conversion of a large uint to a limb array.
 
 // Definition of the limb array type.
@@ -485,6 +292,23 @@ struct limb_array_t_ {
 template <typename T>
 using limb_array_t = typename limb_array_t_<T>::type;
 
+// This is a small utility function to shift down the unsigned integer n by GMP_NUMB_BITS.
+// If GMP_NUMB_BITS is not smaller than the bit size of T, then an assertion will fire. We need this
+// little helper in order to avoid compiler warnings.
+template <typename T>
+inline void u_checked_rshift(T &n, const std::true_type &)
+{
+    static_assert(is_integral<T>::value && is_unsigned<T>::value, "Invalid type.");
+    n >>= GMP_NUMB_BITS;
+}
+
+template <typename T>
+inline void u_checked_rshift(T &, const std::false_type &)
+{
+    static_assert(is_integral<T>::value && is_unsigned<T>::value, "Invalid type.");
+    assert(false);
+}
+
 // Convert a large unsigned integer into a limb array, and return the effective size.
 // n must be > GMP_NUMB_MAX.
 template <typename T>
@@ -494,15 +318,16 @@ inline std::size_t uint_to_limb_array(limb_array_t<T> &rop, T n)
     assert(n > GMP_NUMB_MAX);
     // We can assign the first two limbs directly, as we know n > GMP_NUMB_MAX.
     rop[0] = static_cast<::mp_limb_t>(n & GMP_NUMB_MASK);
-    u_checked_rshift(n);
+    constexpr auto dispatcher = std::integral_constant<bool, (GMP_NUMB_BITS < nl_constants<T>::digits)>{};
+    u_checked_rshift(n, dispatcher);
     assert(n);
     rop[1] = static_cast<::mp_limb_t>(n & GMP_NUMB_MASK);
-    u_checked_rshift(n);
+    u_checked_rshift(n, dispatcher);
     std::size_t size = 2;
     // NOTE: currently this code is hit only on 32-bit archs with 64-bit integers,
     // and we have no nail builds: we cannot go past 2 limbs size.
     // LCOV_EXCL_START
-    for (; n; ++size, u_checked_rshift(n)) {
+    for (; n; ++size, u_checked_rshift(n, dispatcher)) {
         rop[size] = static_cast<::mp_limb_t>(n & GMP_NUMB_MASK);
     }
     // LCOV_EXCL_STOP
@@ -674,6 +499,38 @@ struct static_int {
         // Just forward to the copy assignment.
         return operator=(other);
     }
+    // Swap primitive.
+    void swap(static_int &other) noexcept
+    {
+        if (SSize <= opt_size) {
+            // In this case, we know other's upper limbs are properly zeroed out.
+            // NOTE: self swap of std::array should be fine.
+            std::swap(_mp_size, other._mp_size);
+            std::swap(m_limbs, other.m_limbs);
+        } else {
+            // Otherwise, we must avoid reading from uninited limbs.
+            // Copy over the limbs of this to temp storage.
+            limbs_type tmp;
+            const auto asize1 = abs_size();
+            copy_limbs_no(m_limbs.data(), m_limbs.data() + asize1, tmp.data());
+
+            // Copy over the limbs of other to this.
+            // NOTE: potential overlap here.
+            copy_limbs(other.m_limbs.data(), other.m_limbs.data() + other.abs_size(), m_limbs.data());
+
+            // Copy over the limbs in temp storage to other.
+            copy_limbs_no(tmp.data(), tmp.data() + asize1, other.m_limbs.data());
+
+            // Swap the sizes.
+            std::swap(_mp_size, other._mp_size);
+        }
+    }
+#ifdef __MINGW32__
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wsuggest-attribute=pure"
+
+#endif
     bool dtor_checks() const
     {
         // LCOV_EXCL_START
@@ -702,6 +559,11 @@ struct static_int {
         return true;
         // LCOV_EXCL_STOP
     }
+#ifdef __MINGW32__
+
+#pragma GCC diagnostic pop
+
+#endif
     ~static_int()
     {
         assert(dtor_checks());
@@ -715,7 +577,7 @@ struct static_int {
     // we will have UB due to the const_cast use.
     mpz_struct_t get_mpz_view() const
     {
-        return {_mp_alloc, _mp_size, const_cast<::mp_limb_t *>(m_limbs.data())};
+        return mpz_struct_t{_mp_alloc, _mp_size, const_cast<::mp_limb_t *>(m_limbs.data())};
     }
     mpz_alloc_t _mp_alloc = s_alloc;
     mpz_size_t _mp_size;
@@ -798,7 +660,7 @@ union integer_union {
     {
         if (mppp_unlikely(!std::isfinite(x))) {
             throw std::domain_error("Cannot construct an integer from the non-finite floating-point value "
-                                    + mppp::to_string(x));
+                                    + to_string(x));
         }
         MPPP_MAYBE_TLS mpz_raii tmp;
         ::mpz_set_d(&tmp.m_mpz, static_cast<double>(x));
@@ -810,7 +672,7 @@ union integer_union {
     {
         if (mppp_unlikely(!std::isfinite(x))) {
             throw std::domain_error("Cannot construct an integer from the non-finite floating-point value "
-                                    + mppp::to_string(x));
+                                    + to_string(x));
         }
         // NOTE: static checks for overflows and for the precision value are done in mpfr.hpp.
         constexpr int d2 = std::numeric_limits<long double>::max_digits10 * 4;
@@ -832,14 +694,14 @@ union integer_union {
     {
         if (mppp_unlikely(base != 0 && (base < 2 || base > 62))) {
             throw std::invalid_argument(
-                "In the constructor of integer from string, a base of " + mppp::to_string(base)
+                "In the constructor of integer from string, a base of " + to_string(base)
                 + " was specified, but the only valid values are 0 and any value in the [2,62] range");
         }
         MPPP_MAYBE_TLS mpz_raii mpz;
         if (mppp_unlikely(::mpz_set_str(&mpz.m_mpz, s, base))) {
             if (base) {
                 throw std::invalid_argument(std::string("The string '") + s + "' is not a valid integer in base "
-                                            + mppp::to_string(base));
+                                            + to_string(base));
             } else {
                 throw std::invalid_argument(std::string("The string '") + s
                                             + "' is not a valid integer in any supported base");
@@ -1121,9 +983,17 @@ union integer_union {
 };
 } // namespace detail
 
-// Fwd declaration.
+// Fwd declarations.
 template <std::size_t SSize>
 integer<SSize> &sqrt(integer<SSize> &, const integer<SSize> &);
+
+namespace detail
+{
+
+template <std::size_t SSize>
+void nextprime_impl(integer<SSize> &, const integer<SSize> &);
+
+}
 
 // NOTE: a few misc future directions:
 // - re-visit at one point the issue of the estimators when we need to promote from static to dynamic
@@ -1148,6 +1018,8 @@ integer<SSize> &sqrt(integer<SSize> &, const integer<SSize> &);
 // - perhaps we should consider adding new overloads to functions which return more than one value
 //   (e.g., tdiv_qr(), sqrtrem(), etc.). At this time we have only the GMP-style overload, perhaps
 //   we could have an overload that returns the two values as tuple/pair/array.
+// - the lt/gt static implementations could be specialised for 2-limbs integers. But we need to have
+//   benchmarks before doing it.
 
 // NOTE: about the nails:
 // - whenever we need to read the *numerical value* of a limb (e.g., in our optimised primitives),
@@ -1343,8 +1215,8 @@ template <std::size_t SSize>
 class integer
 {
     // Typedefs for ease of use.
-    using s_storage = static_int<SSize>;
-    using d_storage = mpz_struct_t;
+    using s_storage = detail::static_int<SSize>;
+    using d_storage = detail::mpz_struct_t;
     // The underlying static int.
     using s_int = s_storage;
     // mpz view class.
@@ -1381,7 +1253,7 @@ class integer
         explicit mpz_view(const integer &n)
             // NOTE: explicitly initialize mpz_struct_t() in order to avoid reading from
             // uninited memory in the move constructor, in case of a dynamic view.
-            : m_static_view(n.is_static() ? n.m_int.g_st().get_mpz_view() : mpz_struct_t()),
+            : m_static_view(n.is_static() ? n.m_int.g_st().get_mpz_view() : detail::mpz_struct_t()),
               m_ptr(n.is_static() ? &m_static_view : &(n.m_int.g_dy()))
         {
         }
@@ -1396,16 +1268,16 @@ class integer
         }
         mpz_view &operator=(const mpz_view &) = delete;
         mpz_view &operator=(mpz_view &&) = delete;
-        operator const mpz_struct_t *() const
+        operator const detail::mpz_struct_t *() const
         {
             return get();
         }
-        const mpz_struct_t *get() const
+        const detail::mpz_struct_t *get() const
         {
             return m_ptr;
         }
-        mpz_struct_t m_static_view;
-        const mpz_struct_t *m_ptr;
+        detail::mpz_struct_t m_static_view;
+        const detail::mpz_struct_t *m_ptr;
     };
     // Make friends with rational.
     template <std::size_t>
@@ -1456,7 +1328,7 @@ public:
      * This constructor always initialises ``this`` to a non-negative value,
      * and it requires the most significant limb of ``p`` to be nonzero. It also requires
      * every member of the input array not to be greater than the ``GMP_NUMB_MAX`` GMP constant.
-     * If ``size`` is zero, ``this`` will be initialised to zero.
+     * If ``size`` is zero, ``this`` will be initialised to zero without ever dereferencing ``p``.
      *
      * .. seealso::
      *    https://gmplib.org/manual/Low_002dlevel-Functions.html#Low_002dlevel-Functions
@@ -1502,7 +1374,8 @@ public:
      * @throws std::domain_error if \p x is a non-finite floating-point value.
      */
 #if defined(MPPP_HAVE_CONCEPTS)
-    explicit integer(const CppInteroperable &x)
+    template <CppInteroperable T>
+    explicit integer(const T &x)
 #else
     template <typename T, cpp_interoperable_enabler<T> = 0>
     explicit integer(const T &x)
@@ -1517,7 +1390,7 @@ private:
     };
     explicit integer(const ptag &, const char *s, int base) : m_int(s, base) {}
     explicit integer(const ptag &, const std::string &s, int base) : integer(s.c_str(), base) {}
-#if MPPP_CPLUSPLUS >= 201703L
+#if defined(MPPP_HAVE_STRING_VIEW)
     explicit integer(const ptag &, const std::string_view &s, int base) : integer(s.data(), s.data() + s.size(), base)
     {
     }
@@ -1546,7 +1419,8 @@ public:
      * \endrststar
      */
 #if defined(MPPP_HAVE_CONCEPTS)
-    explicit integer(const StringType &s,
+    template <StringType T>
+    explicit integer(const T &s,
 #else
     template <typename T, string_type_enabler<T> = 0>
     explicit integer(const T &s,
@@ -1634,13 +1508,14 @@ public:
 
 private:
     // Implementation of the assignment from unsigned C++ integral.
-    template <typename T, bool Neg = false, enable_if_t<conjunction<is_integral<T>, is_unsigned<T>>::value, int> = 0>
+    template <typename T, bool Neg = false,
+              detail::enable_if_t<detail::conjunction<detail::is_integral<T>, detail::is_unsigned<T>>::value, int> = 0>
     void dispatch_assignment(T n)
     {
         const auto s = is_static();
         if (n <= GMP_NUMB_MAX) {
             // Optimise the case in which n fits in a single limb.
-            const auto size = static_cast<mpz_size_t>(n != 0);
+            const auto size = static_cast<detail::mpz_size_t>(n != 0);
             if (s) {
                 // Just write the limb into static storage.
                 m_int.g_st()._mp_size = Neg ? -size : size;
@@ -1656,35 +1531,35 @@ private:
             return;
         }
         // Convert n into an array of limbs.
-        limb_array_t<T> tmp;
-        const auto size = uint_to_limb_array(tmp, n);
+        detail::limb_array_t<T> tmp;
+        const auto size = detail::uint_to_limb_array(tmp, n);
         if (s && size <= SSize) {
             // this is static, and n also fits in static. Overwrite the existing value.
             // NOTE: we know size is small, casting is fine.
-            m_int.g_st()._mp_size = static_cast<mpz_size_t>(size);
-            copy_limbs_no(tmp.data(), tmp.data() + size, m_int.g_st().m_limbs.data());
+            m_int.g_st()._mp_size = static_cast<detail::mpz_size_t>(size);
+            detail::copy_limbs_no(tmp.data(), tmp.data() + size, m_int.g_st().m_limbs.data());
             // Zero fill the remaining limbs.
             m_int.g_st().zero_upper_limbs(size);
         } else if (!s && size > SSize) {
             // this is dynamic and n requires dynamic storage.
-            // Convert the size to mpz_size_t, do it before anything else for exception safety.
-            const auto new_mpz_size = safe_cast<mpz_size_t>(size);
+            // Convert the size to detail::mpz_size_t, do it before anything else for exception safety.
+            const auto new_mpz_size = detail::safe_cast<detail::mpz_size_t>(size);
             if (m_int.g_dy()._mp_alloc < new_mpz_size) {
                 // There's not enough space for the new integer. We'll clear the existing
                 // mpz_t (but not destory it), and re-init with the necessary number of limbs.
-                mpz_clear_wrap(m_int.g_dy());
+                detail::mpz_clear_wrap(m_int.g_dy());
                 // NOTE: do not use g_dy() here, as in principle mpz_clear() could touch
                 // the _mp_alloc member in unpredictable ways, and then g_dy() would assert
                 // out in debug builds.
-                mpz_init_nlimbs(m_int.m_dy, size);
+                detail::mpz_init_nlimbs(m_int.m_dy, size);
             }
             // Assign the new size.
             m_int.g_dy()._mp_size = new_mpz_size;
             // Copy over.
-            copy_limbs_no(tmp.data(), tmp.data() + size, m_int.g_dy()._mp_d);
+            detail::copy_limbs_no(tmp.data(), tmp.data() + size, m_int.g_dy()._mp_d);
         } else if (s && size > SSize) {
             // this is static and n requires dynamic storage.
-            const auto new_mpz_size = safe_cast<mpz_size_t>(size);
+            const auto new_mpz_size = detail::safe_cast<detail::mpz_size_t>(size);
             // Destroy static.
             m_int.g_st().~s_storage();
             // Init the dynamic struct.
@@ -1692,11 +1567,11 @@ private:
             // Init to zero, with the necessary amount of allocated limbs.
             // NOTE: need to use m_dy instead of g_dy() here as usual: the alloc
             // tag has not been set yet.
-            mpz_init_nlimbs(m_int.m_dy, size);
+            detail::mpz_init_nlimbs(m_int.m_dy, size);
             // Assign the new size.
             m_int.g_dy()._mp_size = new_mpz_size;
             // Copy over.
-            copy_limbs_no(tmp.data(), tmp.data() + size, m_int.g_dy()._mp_d);
+            detail::copy_limbs_no(tmp.data(), tmp.data() + size, m_int.g_dy()._mp_d);
         } else {
             // This is dynamic and n fits into static.
             assert(!s && size <= SSize);
@@ -1704,7 +1579,7 @@ private:
             m_int.destroy_dynamic();
             // Init a static with the content from tmp. The constructor
             // will zero the upper limbs.
-            ::new (static_cast<void *>(&m_int.m_st)) s_storage{static_cast<mpz_size_t>(size), tmp.data(), size};
+            ::new (static_cast<void *>(&m_int.m_st)) s_storage{static_cast<detail::mpz_size_t>(size), tmp.data(), size};
         }
         // Negate if requested.
         if (Neg) {
@@ -1712,40 +1587,43 @@ private:
         }
     }
     // Assignment from signed integral: take its abs() and negate if necessary, as usual.
-    template <typename T, enable_if_t<conjunction<is_integral<T>, is_signed<T>>::value, int> = 0>
+    template <typename T,
+              detail::enable_if_t<detail::conjunction<detail::is_integral<T>, detail::is_signed<T>>::value, int> = 0>
     void dispatch_assignment(T n)
     {
         if (n >= T(0)) {
             // Positive value, just cast to unsigned.
-            dispatch_assignment(make_unsigned(n));
+            dispatch_assignment(detail::make_unsigned(n));
         } else {
             // Negative value, use its abs.
-            dispatch_assignment<make_unsigned_t<T>, true>(nint_abs(n));
+            dispatch_assignment<detail::make_unsigned_t<T>, true>(detail::nint_abs(n));
         }
     }
     // Special casing for bool.
     void dispatch_assignment(bool n)
     {
         if (is_static()) {
-            m_int.g_st()._mp_size = static_cast<mpz_size_t>(n);
+            m_int.g_st()._mp_size = static_cast<detail::mpz_size_t>(n);
             m_int.g_st().m_limbs[0] = static_cast<::mp_limb_t>(n);
             // Zero out the upper limbs.
             m_int.g_st().zero_upper_limbs(1);
         } else {
             m_int.destroy_dynamic();
             // Construct from size and single limb. This will zero the upper limbs.
-            ::new (static_cast<void *>(&m_int.m_st)) s_storage{static_cast<mpz_size_t>(n), static_cast<::mp_limb_t>(n)};
+            ::new (static_cast<void *>(&m_int.m_st))
+                s_storage{static_cast<detail::mpz_size_t>(n), static_cast<::mp_limb_t>(n)};
         }
     }
     // Assignment from float/double. Uses the mpz_set_d() function.
-    template <typename T, enable_if_t<disjunction<std::is_same<T, float>, std::is_same<T, double>>::value, int> = 0>
+    template <typename T,
+              detail::enable_if_t<detail::disjunction<std::is_same<T, float>, std::is_same<T, double>>::value, int> = 0>
     void dispatch_assignment(T x)
     {
         if (mppp_unlikely(!std::isfinite(x))) {
-            throw std::domain_error("Cannot assign the non-finite floating-point value " + mppp::to_string(x)
+            throw std::domain_error("Cannot assign the non-finite floating-point value " + detail::to_string(x)
                                     + " to an integer");
         }
-        MPPP_MAYBE_TLS mpz_raii tmp;
+        MPPP_MAYBE_TLS detail::mpz_raii tmp;
         ::mpz_set_d(&tmp.m_mpz, static_cast<double>(x));
         *this = &tmp.m_mpz;
     }
@@ -1754,13 +1632,13 @@ private:
     void dispatch_assignment(long double x)
     {
         if (mppp_unlikely(!std::isfinite(x))) {
-            throw std::domain_error("Cannot assign the non-finite floating-point value " + mppp::to_string(x)
+            throw std::domain_error("Cannot assign the non-finite floating-point value " + detail::to_string(x)
                                     + " to an integer");
         }
         // NOTE: static checks for overflows and for the precision value are done in mpfr.hpp.
         constexpr int d2 = std::numeric_limits<long double>::max_digits10 * 4;
-        MPPP_MAYBE_TLS mpfr_raii mpfr(static_cast<::mpfr_prec_t>(d2));
-        MPPP_MAYBE_TLS mpz_raii tmp;
+        MPPP_MAYBE_TLS detail::mpfr_raii mpfr(static_cast<::mpfr_prec_t>(d2));
+        MPPP_MAYBE_TLS detail::mpz_raii tmp;
         ::mpfr_set_ld(&mpfr.m_mpfr, x, MPFR_RNDN);
         ::mpfr_get_z(&tmp.m_mpz, &mpfr.m_mpfr, MPFR_RNDZ);
         *this = &tmp.m_mpz;
@@ -1768,56 +1646,56 @@ private:
 #endif
 
 public:
-/// Generic assignment operator.
-/**
- * \rststar
- * This operator will assign ``x`` to ``this``. The storage type of ``this`` after the assignment
- * will depend only on the value of ``x`` (that is, the storage type will be static if the value of ``x``
- * is small enough, dynamic otherwise). Assignment from floating-point types will assign the truncated
- * counterpart of ``x``.
- * \endrststar
- *
- * @param x the assignment argument.
- *
- * @return a reference to \p this.
- *
- * @throws std::domain_error if ``x`` is a non-finite floating-point value.
- */
+    /// Generic assignment operator.
+    /**
+     * \rststar
+     * This operator will assign ``x`` to ``this``. The storage type of ``this`` after the assignment
+     * will depend only on the value of ``x`` (that is, the storage type will be static if the value of ``x``
+     * is small enough, dynamic otherwise). Assignment from floating-point types will assign the truncated
+     * counterpart of ``x``.
+     * \endrststar
+     *
+     * @param x the assignment argument.
+     *
+     * @return a reference to \p this.
+     *
+     * @throws std::domain_error if ``x`` is a non-finite floating-point value.
+     */
 #if defined(MPPP_HAVE_CONCEPTS)
-    integer &operator=(const CppInteroperable &x)
+    template <CppInteroperable T>
 #else
     template <typename T, cpp_interoperable_enabler<T> = 0>
-    integer &operator=(const T &x)
 #endif
+    integer &operator=(const T &x)
     {
         dispatch_assignment(x);
         return *this;
     }
-/// Assignment from string.
-/**
- * \rststar
- * The body of this operator is equivalent to:
- *
- * .. code-block:: c++
- *
- *    return *this = integer{s};
- *
- * That is, a temporary integer is constructed from the :cpp:concept:`~mppp::StringType`
- * ``s`` and it is then move-assigned to ``this``.
- * \endrststar
- *
- * @param s the string that will be used for the assignment.
- *
- * @return a reference to \p this.
- *
- * @throws unspecified any exception thrown by the constructor from string.
- */
+    /// Assignment from string.
+    /**
+     * \rststar
+     * The body of this operator is equivalent to:
+     *
+     * .. code-block:: c++
+     *
+     *    return *this = integer{s};
+     *
+     * That is, a temporary integer is constructed from the :cpp:concept:`~mppp::StringType`
+     * ``s`` and it is then move-assigned to ``this``.
+     * \endrststar
+     *
+     * @param s the string that will be used for the assignment.
+     *
+     * @return a reference to \p this.
+     *
+     * @throws unspecified any exception thrown by the constructor from string.
+     */
 #if defined(MPPP_HAVE_CONCEPTS)
-    integer &operator=(const StringType &s)
+    template <StringType T>
 #else
     template <typename T, string_type_enabler<T> = 0>
-    integer &operator=(const T &s)
 #endif
+    integer &operator=(const T &s)
     {
         return *this = integer{s};
     }
@@ -1841,12 +1719,12 @@ public:
      */
     integer &operator=(const ::mpz_t n)
     {
-        const auto asize = get_mpz_size(n);
+        const auto asize = detail::get_mpz_size(n);
         const auto s = is_static();
         if (s && asize <= SSize) {
             // this is static, n fits into static. Copy over.
             m_int.g_st()._mp_size = n->_mp_size;
-            copy_limbs_no(n->_mp_d, n->_mp_d + asize, m_int.g_st().m_limbs.data());
+            detail::copy_limbs_no(n->_mp_d, n->_mp_d + asize, m_int.g_st().m_limbs.data());
             // Zero the non-copied limbs, if necessary.
             m_int.g_st().zero_upper_limbs(asize);
         } else if (!s && asize > SSize) {
@@ -1858,7 +1736,7 @@ public:
             m_int.g_st().~s_storage();
             // Init dynamic.
             ::new (static_cast<void *>(&m_int.m_dy)) d_storage;
-            mpz_init_set_nlimbs(m_int.m_dy, *n);
+            detail::mpz_init_set_nlimbs(m_int.m_dy, *n);
         } else {
             // This is dynamic and n fits into static.
             assert(!s && asize <= SSize);
@@ -1898,19 +1776,19 @@ public:
      */
     integer &operator=(::mpz_t &&n)
     {
-        const auto asize = get_mpz_size(n);
+        const auto asize = detail::get_mpz_size(n);
         const auto s = is_static();
         if (s && asize <= SSize) {
             // this is static, n fits into static. Copy over.
             m_int.g_st()._mp_size = n->_mp_size;
-            copy_limbs_no(n->_mp_d, n->_mp_d + asize, m_int.g_st().m_limbs.data());
+            detail::copy_limbs_no(n->_mp_d, n->_mp_d + asize, m_int.g_st().m_limbs.data());
             // Zero the non-copied limbs, if necessary.
             m_int.g_st().zero_upper_limbs(asize);
             // Clear out n.
-            mpz_clear_wrap(*n);
+            detail::mpz_clear_wrap(*n);
         } else if (!s && asize > SSize) {
             // Dynamic to dynamic: clear this, shallow copy n.
-            mpz_clear_wrap(m_int.m_dy);
+            detail::mpz_clear_wrap(m_int.m_dy);
             m_int.m_dy = *n;
         } else if (s && asize > SSize) {
             // this is static, n is too big. Promote and assign.
@@ -1926,7 +1804,7 @@ public:
             // Init a static with the content from n. This will zero the upper limbs.
             ::new (static_cast<void *>(&m_int.m_st)) s_storage{n->_mp_size, n->_mp_d, asize};
             // Clear out n.
-            mpz_clear_wrap(*n);
+            detail::mpz_clear_wrap(*n);
         }
         return *this;
     }
@@ -2044,25 +1922,25 @@ public:
         if (mppp_unlikely(base < 2 || base > 62)) {
             throw std::invalid_argument("Invalid base for string conversion: the base must be between "
                                         "2 and 62, but a value of "
-                                        + mppp::to_string(base) + " was provided instead");
+                                        + detail::to_string(base) + " was provided instead");
         }
-        return mpz_to_str(get_mpz_view(), base);
+        return detail::mpz_to_str(get_mpz_view(), base);
     }
     // NOTE: maybe provide a method to access the lower-level str conversion that writes to
     // std::vector<char>?
 
 private:
     // Conversion to bool.
-    template <typename T, enable_if_t<std::is_same<bool, T>::value, int> = 0>
+    template <typename T, detail::enable_if_t<std::is_same<bool, T>::value, int> = 0>
     std::pair<bool, T> dispatch_conversion() const
     {
         return std::make_pair(true, m_int.m_st._mp_size != 0);
     }
     // Implementation of the conversion to unsigned types which fit in a limb.
-    template <typename T, bool Sign, enable_if_t<(nl_constants<T>::digits <= GMP_NUMB_BITS), int> = 0>
+    template <typename T, bool Sign, detail::enable_if_t<(detail::nl_constants<T>::digits <= GMP_NUMB_BITS), int> = 0>
     std::pair<bool, T> convert_to_unsigned() const
     {
-        static_assert(is_integral<T>::value && is_unsigned<T>::value, "Invalid type.");
+        static_assert(detail::is_integral<T>::value && detail::is_unsigned<T>::value, "Invalid type.");
         assert((Sign && m_int.m_st._mp_size > 0) || (!Sign && m_int.m_st._mp_size < 0));
         if ((Sign && m_int.m_st._mp_size != 1) || (!Sign && m_int.m_st._mp_size != -1)) {
             // If the asize is not 1, the conversion will fail.
@@ -2070,7 +1948,7 @@ private:
         }
         // Get the pointer to the limbs.
         const ::mp_limb_t *ptr = is_static() ? m_int.g_st().m_limbs.data() : m_int.g_dy()._mp_d;
-        if ((ptr[0] & GMP_NUMB_MASK) > nl_max<T>()) {
+        if ((ptr[0] & GMP_NUMB_MASK) > detail::nl_max<T>()) {
             // The only limb has a value which exceeds the limit of T.
             return std::make_pair(false, T(0));
         }
@@ -2078,19 +1956,19 @@ private:
         return std::make_pair(true, static_cast<T>(ptr[0] & GMP_NUMB_MASK));
     }
     // Implementation of the conversion to unsigned types which do not fit in a limb.
-    template <typename T, bool Sign, enable_if_t<(nl_constants<T>::digits > GMP_NUMB_BITS), int> = 0>
+    template <typename T, bool Sign, detail::enable_if_t<(detail::nl_constants<T>::digits > GMP_NUMB_BITS), int> = 0>
     std::pair<bool, T> convert_to_unsigned() const
     {
-        static_assert(is_integral<T>::value && is_unsigned<T>::value, "Invalid type.");
+        static_assert(detail::is_integral<T>::value && detail::is_unsigned<T>::value, "Invalid type.");
         assert((Sign && m_int.m_st._mp_size > 0) || (!Sign && m_int.m_st._mp_size < 0));
         const auto asize = Sign ? static_cast<std::size_t>(m_int.m_st._mp_size)
-                                : static_cast<std::size_t>(nint_abs(m_int.m_st._mp_size));
+                                : static_cast<std::size_t>(detail::nint_abs(m_int.m_st._mp_size));
         // Get the pointer to the limbs.
         const ::mp_limb_t *ptr = is_static() ? m_int.g_st().m_limbs.data() : m_int.g_dy()._mp_d;
         // Init the retval with the first limb. This is safe as T has more bits than the limb type.
         auto retval = static_cast<T>(ptr[0] & GMP_NUMB_MASK);
         // Add the other limbs, if any.
-        constexpr unsigned u_bits = nl_digits<T>();
+        constexpr unsigned u_bits = detail::nl_digits<T>();
         unsigned shift(GMP_NUMB_BITS);
         for (std::size_t i = 1u; i < asize; ++i, shift += unsigned(GMP_NUMB_BITS)) {
             if (shift >= u_bits) {
@@ -2114,8 +1992,9 @@ private:
         return std::make_pair(true, retval);
     }
     // Conversion to unsigned ints, excluding bool.
-    template <typename T,
-              enable_if_t<conjunction<is_integral<T>, is_unsigned<T>, negation<std::is_same<bool, T>>>::value, int> = 0>
+    template <typename T, detail::enable_if_t<detail::conjunction<detail::is_integral<T>, detail::is_unsigned<T>,
+                                                                  detail::negation<std::is_same<bool, T>>>::value,
+                                              int> = 0>
     std::pair<bool, T> dispatch_conversion() const
     {
         // Handle zero.
@@ -2140,16 +2019,18 @@ private:
     // chokes on constexpr functions in a SFINAE context.
     template <typename T>
     struct sconv_is_small {
-        static const bool value = c_max(make_unsigned(nl_max<T>()), nint_abs(nl_min<T>())) <= GMP_NUMB_MAX;
+        static const bool value
+            = detail::c_max(detail::make_unsigned(detail::nl_max<T>()), detail::nint_abs(detail::nl_min<T>()))
+              <= GMP_NUMB_MAX;
     };
     // Overload if the all the absolute values of T fit into a limb.
-    template <typename T, enable_if_t<sconv_is_small<T>::value, int> = 0>
+    template <typename T, detail::enable_if_t<sconv_is_small<T>::value, int> = 0>
     std::pair<bool, T> convert_to_signed() const
     {
-        static_assert(is_integral<T>::value && is_signed<T>::value, "Invalid type.");
+        static_assert(detail::is_integral<T>::value && detail::is_signed<T>::value, "Invalid type.");
         assert(size());
         // Cache for convenience.
-        constexpr auto Tmax = make_unsigned(nl_max<T>());
+        constexpr auto Tmax = detail::make_unsigned(detail::nl_max<T>());
         if (m_int.m_st._mp_size != 1 && m_int.m_st._mp_size != -1) {
             // this consists of more than 1 limb, the conversion is not possible.
             return std::make_pair(false, T(0));
@@ -2166,19 +2047,19 @@ private:
             }
             return std::make_pair(false, T(0));
         } else {
-            return unsigned_to_nsigned<T>(candidate);
+            return detail::unsigned_to_nsigned<T>(candidate);
         }
     }
     // Overload if not all the absolute values of T fit into a limb.
-    template <typename T, enable_if_t<!sconv_is_small<T>::value, int> = 0>
+    template <typename T, detail::enable_if_t<!sconv_is_small<T>::value, int> = 0>
     std::pair<bool, T> convert_to_signed() const
     {
         // Cache for convenience.
-        constexpr auto Tmax = make_unsigned(nl_max<T>());
+        constexpr auto Tmax = detail::make_unsigned(detail::nl_max<T>());
         // Branch out depending on the sign of this.
         if (m_int.m_st._mp_size > 0) {
             // Attempt conversion to the unsigned counterpart.
-            const auto candidate = convert_to_unsigned<make_unsigned_t<T>, true>();
+            const auto candidate = convert_to_unsigned<detail::make_unsigned_t<T>, true>();
             if (candidate.first && candidate.second <= Tmax) {
                 // The conversion to unsigned was successful, and the result fits in
                 // the positive range of T. Return the result.
@@ -2188,16 +2069,17 @@ private:
             return std::make_pair(false, T(0));
         } else {
             // Attempt conversion to the unsigned counterpart.
-            const auto candidate = convert_to_unsigned<make_unsigned_t<T>, false>();
+            const auto candidate = convert_to_unsigned<detail::make_unsigned_t<T>, false>();
             if (candidate.first) {
                 // The converstion to unsigned was successful, try to negate now.
-                return unsigned_to_nsigned<T>(candidate.second);
+                return detail::unsigned_to_nsigned<T>(candidate.second);
             }
             // The conversion to unsigned failed.
             return std::make_pair(false, T(0));
         }
     }
-    template <typename T, enable_if_t<conjunction<is_integral<T>, is_signed<T>>::value, int> = 0>
+    template <typename T,
+              detail::enable_if_t<detail::conjunction<detail::is_integral<T>, detail::is_signed<T>>::value, int> = 0>
     std::pair<bool, T> dispatch_conversion() const
     {
         // Handle zero.
@@ -2207,23 +2089,24 @@ private:
         return convert_to_signed<T>();
     }
     // Implementation of the conversion to floating-point through GMP/MPFR routines.
-    template <typename T, enable_if_t<disjunction<std::is_same<T, float>, std::is_same<T, double>>::value, int> = 0>
-    static std::pair<bool, T> mpz_float_conversion(const mpz_struct_t &m)
+    template <typename T,
+              detail::enable_if_t<detail::disjunction<std::is_same<T, float>, std::is_same<T, double>>::value, int> = 0>
+    static std::pair<bool, T> mpz_float_conversion(const detail::mpz_struct_t &m)
     {
         return std::make_pair(true, static_cast<T>(::mpz_get_d(&m)));
     }
 #if defined(MPPP_WITH_MPFR)
-    template <typename T, enable_if_t<std::is_same<T, long double>::value, int> = 0>
-    static std::pair<bool, T> mpz_float_conversion(const mpz_struct_t &m)
+    template <typename T, detail::enable_if_t<std::is_same<T, long double>::value, int> = 0>
+    static std::pair<bool, T> mpz_float_conversion(const detail::mpz_struct_t &m)
     {
         constexpr int d2 = std::numeric_limits<long double>::max_digits10 * 4;
-        MPPP_MAYBE_TLS mpfr_raii mpfr(static_cast<::mpfr_prec_t>(d2));
+        MPPP_MAYBE_TLS detail::mpfr_raii mpfr(static_cast<::mpfr_prec_t>(d2));
         ::mpfr_set_z(&mpfr.m_mpfr, &m, MPFR_RNDN);
         return std::make_pair(true, ::mpfr_get_ld(&mpfr.m_mpfr, MPFR_RNDN));
     }
 #endif
     // Conversion to floating-point.
-    template <typename T, enable_if_t<std::is_floating_point<T>::value, int> = 0>
+    template <typename T, detail::enable_if_t<std::is_floating_point<T>::value, int> = 0>
     std::pair<bool, T> dispatch_conversion() const
     {
         // Handle zero.
@@ -2257,7 +2140,7 @@ private:
             }
         }
         // For all the other cases, just delegate to the GMP/MPFR routines.
-        return mpz_float_conversion<T>(*static_cast<const mpz_struct_t *>(get_mpz_view()));
+        return mpz_float_conversion<T>(*static_cast<const detail::mpz_struct_t *>(get_mpz_view()));
     }
 
 public:
@@ -2285,7 +2168,7 @@ public:
     {
         auto retval = dispatch_conversion<T>();
         if (mppp_unlikely(!retval.first)) {
-            throw std::overflow_error("Conversion of the integer " + to_string() + " to the type '" + demangle<T>()
+            throw std::overflow_error("The conversion of the integer " + to_string() + " to the type '" + type_name<T>()
                                       + "' results in overflow");
         }
         return std::move(retval.second);
@@ -2362,15 +2245,15 @@ public:
         }
         const ::mp_limb_t *lptr = is_static() ? m_int.g_st().m_limbs.data() : m_int.g_dy()._mp_d;
         // LCOV_EXCL_START
-        if (mppp_unlikely(ls > nl_max<std::size_t>() / unsigned(GMP_NUMB_BITS))) {
+        if (mppp_unlikely(ls > detail::nl_max<std::size_t>() / unsigned(GMP_NUMB_BITS))) {
             throw std::overflow_error("Overflow in the computation of the number of bits required to represent an "
                                       "integer - the limb size is "
-                                      + mppp::to_string(ls));
+                                      + detail::to_string(ls));
         }
         // LCOV_EXCL_STOP
         // Index of the most significant limb.
         const std::size_t idx = ls - 1u;
-        return static_cast<std::size_t>(idx * unsigned(GMP_NUMB_BITS) + limb_size_nbits(lptr[idx]));
+        return static_cast<std::size_t>(idx * unsigned(GMP_NUMB_BITS) + detail::limb_size_nbits(lptr[idx]));
     }
     /// Size in limbs.
     /**
@@ -2382,7 +2265,7 @@ public:
         // asize of an integer represents ultimately the size of a limb array, and as such
         // it has to be representable by std::size_t.
         return (m_int.m_st._mp_size) >= 0 ? static_cast<std::size_t>(m_int.m_st._mp_size)
-                                          : static_cast<std::size_t>(nint_abs(m_int.m_st._mp_size));
+                                          : static_cast<std::size_t>(detail::nint_abs(m_int.m_st._mp_size));
     }
     /// Sign.
     /**
@@ -2391,7 +2274,7 @@ public:
     int sgn() const
     {
         // NOTE: size is part of the common initial sequence.
-        return integral_sign(m_int.m_st._mp_size);
+        return detail::integral_sign(m_int.m_st._mp_size);
     }
     /// Get an \p mpz_t view.
     /**
@@ -2460,7 +2343,7 @@ public:
      */
     integer &nextprime()
     {
-        nextprime_impl(*this, *this);
+        detail::nextprime_impl(*this, *this);
         return *this;
     }
     /// Test primality.
@@ -2479,7 +2362,7 @@ public:
     {
         if (mppp_unlikely(reps < 1)) {
             throw std::invalid_argument("The number of primality tests must be at least 1, but a value of "
-                                        + mppp::to_string(reps) + " was provided instead");
+                                        + detail::to_string(reps) + " was provided instead");
         }
         if (mppp_unlikely(sgn() < 0)) {
             throw std::invalid_argument("Cannot run primality tests on the negative number " + to_string());
@@ -2531,7 +2414,7 @@ public:
      *
      * @return a reference to the internal union member.
      */
-    integer_union<SSize> &_get_union()
+    detail::integer_union<SSize> &_get_union()
     {
         return m_int;
     }
@@ -2541,7 +2424,7 @@ public:
      *
      * @return a const reference to the internal union member.
      */
-    const integer_union<SSize> &_get_union() const
+    const detail::integer_union<SSize> &_get_union() const
     {
         return m_int;
     }
@@ -2633,12 +2516,12 @@ public:
         // Here we have the very theoretical situation in which we run into possible overflow,
         // as the limb array and the size member are distinct objects and thus although individually
         // their size must fit in size_t, together they could exceed it.
-        if (mppp_unlikely(asize
-                          > (std::numeric_limits<std::size_t>::max() - sizeof(mpz_size_t)) / sizeof(::mp_limb_t))) {
+        if (mppp_unlikely(asize > (std::numeric_limits<std::size_t>::max() - sizeof(detail::mpz_size_t))
+                                      / sizeof(::mp_limb_t))) {
             throw std::overflow_error(binary_size_errmsg);
         }
         // LCOV_EXCL_STOP
-        return sizeof(mpz_size_t) + asize * sizeof(::mp_limb_t);
+        return sizeof(detail::mpz_size_t) + asize * sizeof(::mp_limb_t);
     }
 
 private:
@@ -2650,9 +2533,9 @@ private:
         // Here it should not matter, unless one is somehow trying to save an integer
         // into itself (I guess?). It's probably not necessary to put these aliasing
         // restrictions in the user docs.
-        std::copy(ptr, ptr + sizeof(mpz_size_t), make_uai(dest));
+        std::copy(ptr, ptr + sizeof(detail::mpz_size_t), detail::make_uai(dest));
         ptr = reinterpret_cast<const char *>(is_static() ? m_int.g_st().m_limbs.data() : m_int.g_dy()._mp_d);
-        std::copy(ptr, ptr + (bs - sizeof(mpz_size_t)), make_uai(dest + sizeof(mpz_size_t)));
+        std::copy(ptr, ptr + (bs - sizeof(detail::mpz_size_t)), detail::make_uai(dest + sizeof(detail::mpz_size_t)));
     }
 
 public:
@@ -2718,7 +2601,7 @@ public:
     {
         const auto bs = binary_size();
         if (dest.size() < bs) {
-            dest.resize(safe_cast<decltype(dest.size())>(bs));
+            dest.resize(detail::safe_cast<decltype(dest.size())>(bs));
         }
         binary_save_impl(dest.data(), bs);
         return bs;
@@ -2797,13 +2680,13 @@ public:
         //
         // Write the raw data to stream.
         dest.write(reinterpret_cast<const char *>(&m_int.m_st._mp_size),
-                   safe_cast<std::streamsize>(sizeof(mpz_size_t)));
+                   detail::safe_cast<std::streamsize>(sizeof(detail::mpz_size_t)));
         if (!dest.good()) {
             // !dest.good() means that the last write operation failed. Bail out now.
             return 0;
         }
         dest.write(reinterpret_cast<const char *>(is_static() ? m_int.g_st().m_limbs.data() : m_int.g_dy()._mp_d),
-                   safe_cast<std::streamsize>(bs - sizeof(mpz_size_t)));
+                   detail::safe_cast<std::streamsize>(bs - sizeof(detail::mpz_size_t)));
         return dest.good() ? bs : 0u;
     }
 
@@ -2811,7 +2694,7 @@ private:
     // Error message in case of invalid data during binary deserialisation.
     static const char bl_data_errmsg[];
     // A couple of helpers to check a deserialised integer.
-    void bl_dynamic_check(const make_unsigned_t<mpz_size_t> &asize)
+    void bl_dynamic_check(const detail::make_unsigned_t<detail::mpz_size_t> &asize)
     {
         // NOTE: here we are sure that asize is nonzero, as we end up in dynamic storage iff asize > SSize,
         // and SSize is at least 1.
@@ -2822,7 +2705,7 @@ private:
             throw std::invalid_argument(bl_data_errmsg);
         }
     }
-    void bl_static_check(const make_unsigned_t<mpz_size_t> &asize)
+    void bl_static_check(const detail::make_unsigned_t<detail::mpz_size_t> &asize)
     {
         // NOTE: here we need to check that asize is nonzero.
         if (mppp_unlikely(asize && !(m_int.g_st().m_limbs[static_cast<std::size_t>(asize - 1u)] & GMP_NUMB_MASK))) {
@@ -2834,17 +2717,19 @@ private:
     }
     // Read the size and asize of a serialised integer stored in a buffer
     // starting at src.
-    static std::pair<mpz_size_t, make_unsigned_t<mpz_size_t>> bl_read_size_asize(const char *src)
+    static std::pair<detail::mpz_size_t, detail::make_unsigned_t<detail::mpz_size_t>>
+    bl_read_size_asize(const char *src)
     {
-        mpz_size_t size;
-        std::copy(src, src + sizeof(mpz_size_t), make_uai(reinterpret_cast<char *>(&size)));
+        detail::mpz_size_t size;
+        std::copy(src, src + sizeof(detail::mpz_size_t), detail::make_uai(reinterpret_cast<char *>(&size)));
         // NOTE: we don't use std::size_t here for the asize as we don't have any assurance
         // that a value in the std::size_t range was written into the buffer.
-        return std::make_pair(size, size >= 0 ? make_unsigned(size) : nint_abs(size));
+        return std::make_pair(size, size >= 0 ? detail::make_unsigned(size) : detail::nint_abs(size));
     }
     // Low level implementation of binary load. src must point to the start of the serialised
     // limb array.
-    void binary_load_impl(const char *src, const mpz_size_t &size, const make_unsigned_t<mpz_size_t> &asize)
+    void binary_load_impl(const char *src, const detail::mpz_size_t &size,
+                          const detail::make_unsigned_t<detail::mpz_size_t> &asize)
     {
         // Check for overflow in asize.
         // LCOV_EXCL_START
@@ -2860,7 +2745,7 @@ private:
             m_int.g_st()._mp_size = size;
             // Copy over the data from the source.
             std::copy(src, src + static_cast<std::size_t>(sizeof(::mp_limb_t) * asize),
-                      make_uai(reinterpret_cast<char *>(m_int.g_st().m_limbs.data())));
+                      detail::make_uai(reinterpret_cast<char *>(m_int.g_st().m_limbs.data())));
             // Clear the upper limbs, if needed.
             m_int.g_st().zero_upper_limbs(static_cast<std::size_t>(asize));
             // Check the deserialised value.
@@ -2872,12 +2757,12 @@ private:
             // Construct the dynamic struct.
             ::new (static_cast<void *>(&m_int.m_dy)) d_storage;
             // Init the mpz. This will set the value to zero.
-            mpz_init_nlimbs(m_int.m_dy, static_cast<std::size_t>(asize));
+            detail::mpz_init_nlimbs(m_int.m_dy, static_cast<std::size_t>(asize));
             // Set the size.
             m_int.g_dy()._mp_size = size;
             // Copy over the data from the source.
             std::copy(src, src + static_cast<std::size_t>(sizeof(::mp_limb_t) * asize),
-                      make_uai(reinterpret_cast<char *>(m_int.g_dy()._mp_d)));
+                      detail::make_uai(reinterpret_cast<char *>(m_int.g_dy()._mp_d)));
             // Check the deserialised value.
             bl_dynamic_check(asize);
         } else if (!s && asize <= SSize) {
@@ -2890,7 +2775,7 @@ private:
             m_int.g_st()._mp_size = size;
             // Copy over the data from the source.
             std::copy(src, src + static_cast<std::size_t>(sizeof(::mp_limb_t) * asize),
-                      make_uai(reinterpret_cast<char *>(m_int.g_st().m_limbs.data())));
+                      detail::make_uai(reinterpret_cast<char *>(m_int.g_st().m_limbs.data())));
             // NOTE: no need to clear the upper limbs: they were already zeroed out
             // by the default constructor of static_int.
             // Check the deserialised value.
@@ -2898,20 +2783,20 @@ private:
         } else {
             // this is dynamic, src contains a dynamic integer.
             // If this does not have enough storage, we need to allocate.
-            if (get_mpz_size(&m_int.g_dy()) < asize) {
+            if (detail::get_mpz_size(&m_int.g_dy()) < asize) {
                 // Clear, but do not destroy, the dynamic storage.
-                mpz_clear_wrap(m_int.g_dy());
+                detail::mpz_clear_wrap(m_int.g_dy());
                 // Re-init to zero with the necessary size.
                 // NOTE: do not use g_dy() here, as in principle mpz_clear() could touch
                 // the _mp_alloc member in unpredictable ways, and then g_dy() would assert
                 // out in debug builds.
-                mpz_init_nlimbs(m_int.m_dy, static_cast<std::size_t>(asize));
+                detail::mpz_init_nlimbs(m_int.m_dy, static_cast<std::size_t>(asize));
             }
             // Set the size.
             m_int.g_dy()._mp_size = size;
             // Copy over the data from the source.
             std::copy(src, src + static_cast<std::size_t>(sizeof(::mp_limb_t) * asize),
-                      make_uai(reinterpret_cast<char *>(m_int.g_dy()._mp_d)));
+                      detail::make_uai(reinterpret_cast<char *>(m_int.g_dy()._mp_d)));
             // Check the deserialised value.
             bl_dynamic_check(asize);
         }
@@ -2921,9 +2806,9 @@ private:
     // NOTE: since we deserialised the integer from a contiguous buffer, the
     // total number of bytes read has to be representable by std::size_t (unlike
     // in binary_size(), where we do have to check for overflow).
-    static std::size_t read_bytes(const make_unsigned_t<mpz_size_t> &asize)
+    static std::size_t read_bytes(const detail::make_unsigned_t<detail::mpz_size_t> &asize)
     {
-        return static_cast<std::size_t>(sizeof(mpz_size_t) + asize * sizeof(::mp_limb_t));
+        return static_cast<std::size_t>(sizeof(detail::mpz_size_t) + asize * sizeof(::mp_limb_t));
     }
 
 public:
@@ -2954,14 +2839,17 @@ public:
      */
     std::size_t binary_load(const char *src)
     {
-#if MPPP_CPLUSPLUS >= 201703L
+        // NOTE: disable the use of structured bindings
+        // on MSVC altogether, due to this clang-cl issue:
+        // https://bugs.llvm.org/show_bug.cgi?id=41745
+#if MPPP_CPLUSPLUS >= 201703L && !defined(_MSC_VER)
         const auto [size, asize] = bl_read_size_asize(src);
 #else
-        mpz_size_t size;
-        make_unsigned_t<mpz_size_t> asize;
+        detail::mpz_size_t size;
+        detail::make_unsigned_t<detail::mpz_size_t> asize;
         std::tie(size, asize) = bl_read_size_asize(src);
 #endif
-        binary_load_impl(src + sizeof(mpz_size_t), size, asize);
+        binary_load_impl(src + sizeof(detail::mpz_size_t), size, asize);
         return read_bytes(asize);
     }
 
@@ -2971,19 +2859,19 @@ private:
     std::size_t binary_load_vector(const Vector &src, const char *name)
     {
         // Verify we can at least read the size out of src.
-        if (mppp_unlikely(src.size() < sizeof(mpz_size_t))) {
+        if (mppp_unlikely(src.size() < sizeof(detail::mpz_size_t))) {
             throw std::invalid_argument(std::string("Invalid vector size in the deserialisation of an integer via a ")
                                         + name + ": the " + name + " size must be at least "
-                                        + std::to_string(sizeof(mpz_size_t)) + " bytes, but it is only "
+                                        + std::to_string(sizeof(detail::mpz_size_t)) + " bytes, but it is only "
                                         + std::to_string(src.size()) + " bytes");
         }
         // Size in bytes of the limbs portion of the data.
-        const auto lsize = src.size() - sizeof(mpz_size_t);
-#if MPPP_CPLUSPLUS >= 201703L
+        const auto lsize = src.size() - sizeof(detail::mpz_size_t);
+#if MPPP_CPLUSPLUS >= 201703L && !defined(_MSC_VER)
         const auto [size, asize] = bl_read_size_asize(src.data());
 #else
-        mpz_size_t size;
-        make_unsigned_t<mpz_size_t> asize;
+        detail::mpz_size_t size;
+        detail::make_unsigned_t<detail::mpz_size_t> asize;
         std::tie(size, asize) = bl_read_size_asize(src.data());
 #endif
         // The number of entire limbs stored in the vector must be at least the integer
@@ -2995,7 +2883,7 @@ private:
                 + ") is less than the integer size in limbs stored in the header of the vector ("
                 + std::to_string(asize) + ")");
         }
-        binary_load_impl(src.data() + sizeof(mpz_size_t), size, asize);
+        binary_load_impl(src.data() + sizeof(detail::mpz_size_t), size, asize);
         return read_bytes(asize);
     }
 
@@ -3101,14 +2989,14 @@ public:
     std::size_t binary_load(std::istream &src)
     {
         // Let's start by reading size/asize.
-        mpz_size_t size;
-        src.read(reinterpret_cast<char *>(&size), safe_cast<std::streamsize>(sizeof(mpz_size_t)));
+        detail::mpz_size_t size;
+        src.read(reinterpret_cast<char *>(&size), detail::safe_cast<std::streamsize>(sizeof(detail::mpz_size_t)));
         if (!src.good()) {
             // Something went wrong with reading, return 0.
             return 0;
         }
         // Determine asize.
-        const auto asize = size >= 0 ? make_unsigned(size) : nint_abs(size);
+        const auto asize = size >= 0 ? detail::make_unsigned(size) : detail::nint_abs(size);
         // Check for overflow.
         // LCOV_EXCL_START
         if (mppp_unlikely(asize > std::numeric_limits<std::size_t>::max() / sizeof(::mp_limb_t))) {
@@ -3126,9 +3014,9 @@ public:
         MPPP_MAYBE_TLS std::vector<char> buffer;
         if (lsize > buffer.size()) {
             // Enlarge the local buffer if needed.
-            buffer.resize(safe_cast<decltype(buffer.size())>(lsize));
+            buffer.resize(detail::safe_cast<decltype(buffer.size())>(lsize));
         }
-        src.read(buffer.data(), safe_cast<std::streamsize>(lsize));
+        src.read(buffer.data(), detail::safe_cast<std::streamsize>(lsize));
         if (!src.good()) {
             // Something went wrong with reading, return 0.
             return 0;
@@ -3143,7 +3031,7 @@ public:
     }
 
 private:
-    integer_union<SSize> m_int;
+    detail::integer_union<SSize> m_int;
 };
 
 #if MPPP_CPLUSPLUS < 201703L
@@ -3165,71 +3053,75 @@ const char integer<SSize>::bl_data_errmsg[]
     = "Invalid data detected in the binary deserialisation of an integer: the most "
       "significant limb of the value cannot be zero";
 
-/** @defgroup integer_assignment integer_assignment
- *  @{
- */
+namespace detail
+{
 
-/// Set to zero.
-/**
- * After calling this function, the storage type of \p n will be static and its value will be zero.
- *
- * \rststar
- * .. note::
- *
- *   This is a specialised higher-performance alternative to the assignment operator.
- * \endrststar
- *
- * @param n the assignment argument.
- *
- * @return a reference to \p n.
- */
+// Swap u1 and u2. u1 must be static, u2 must be dynamic.
+template <std::size_t SSize>
+inline void integer_swap_static_dynamic(integer_union<SSize> &u1, integer_union<SSize> &u2) noexcept
+{
+    using s_storage = typename integer_union<SSize>::s_storage;
+    using d_storage = typename integer_union<SSize>::d_storage;
+
+    assert(u1.is_static());
+    assert(!u2.is_static());
+
+    // Copy the static in temp storage.
+    const auto n1_copy(u1.g_st());
+    // Destroy the static.
+    u1.g_st().~s_storage();
+    // Construct the dynamic struct, shallow-copying from n2.
+    ::new (static_cast<void *>(&u1.m_dy)) d_storage(u2.g_dy());
+    // Re-create n2 as a static copying from n1_copy.
+    u2.g_dy().~d_storage();
+    ::new (static_cast<void *>(&u2.m_st)) s_storage(n1_copy);
+}
+
+} // namespace detail
+
+// Swap.
+template <std::size_t SSize>
+inline void swap(integer<SSize> &n1, integer<SSize> &n2) noexcept
+{
+    auto &u1 = n1._get_union();
+    auto &u2 = n2._get_union();
+
+    const bool s1 = u1.is_static(), s2 = u2.is_static();
+    if (s1 && s2) {
+        // Self swap is fine, handled in the static.
+        u1.g_st().swap(u2.g_st());
+    } else if (s1 && !s2) {
+        detail::integer_swap_static_dynamic(u1, u2);
+    } else if (!s1 && s2) {
+        // Mirror of the above.
+        detail::integer_swap_static_dynamic(u2, u1);
+    } else {
+        // Swap with other. Self swap is fine, mpz_swap() can have
+        // aliasing arguments.
+        ::mpz_swap(&u1.g_dy(), &u2.g_dy());
+    }
+}
+
+// Set to zero.
 template <std::size_t SSize>
 inline integer<SSize> &set_zero(integer<SSize> &n)
 {
     return n.set_zero();
 }
 
-/// Set to one.
-/**
- * After calling this function, the storage type of \p n will be static and its value will be one.
- *
- * \rststar
- * .. note::
- *
- *   This is a specialised higher-performance alternative to the assignment operator.
- * \endrststar
- *
- * @param n the assignment argument.
- *
- * @return a reference to \p n.
- */
+// Set to one.
 template <std::size_t SSize>
 inline integer<SSize> &set_one(integer<SSize> &n)
 {
     return n.set_one();
 }
 
-/// Set to minus one.
-/**
- * After calling this function, the storage type of \p n will be static and its value will be minus one.
- *
- * \rststar
- * .. note::
- *
- *   This is a specialised higher-performance alternative to the assignment operator.
- * \endrststar
- *
- * @param n the assignment argument.
- *
- * @return a reference to \p n.
- */
+// Set to minus one.
 template <std::size_t SSize>
 inline integer<SSize> &set_negative_one(integer<SSize> &n)
 {
     return n.set_negative_one();
 }
-
-/** @} */
 
 /** @defgroup integer_conversion integer_conversion
  *  @{
@@ -3252,8 +3144,8 @@ inline integer<SSize> &set_negative_one(integer<SSize> &n)
  * a C++ integral which cannot represent the value of ``n``.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <std::size_t SSize>
-inline bool get(CppInteroperable &rop, const integer<SSize> &n)
+template <CppInteroperable T, std::size_t SSize>
+inline bool get(T &rop, const integer<SSize> &n)
 #else
 template <typename T, std::size_t SSize, cpp_interoperable_enabler<T> = 0>
 inline bool get(T &rop, const integer<SSize> &n)
@@ -3264,7 +3156,7 @@ inline bool get(T &rop, const integer<SSize> &n)
 
 /** @} */
 
-inline namespace detail
+namespace detail
 {
 
 // Machinery for the determination of the result of a binary operation involving integer.
@@ -3318,34 +3210,36 @@ template <std::size_t SSize>
 struct is_integer<integer<SSize>> : std::true_type {
 };
 
-template <typename T, typename U>
-using are_integer_op_types = is_detected<integer_common_t, T, U>;
-
-template <typename T, typename U>
-#if defined(MPPP_HAVE_CONCEPTS)
-concept bool IntegerOpTypes = are_integer_op_types<T, U>::value;
-#else
-using integer_op_types_enabler = enable_if_t<are_integer_op_types<T, U>::value, int>;
-#endif
 } // namespace detail
 
 template <typename T, typename U>
-using are_integer_integral_op_types
-    = disjunction<is_same_ssize_integer<T, U>, conjunction<is_integer<T>, is_cpp_integral_interoperable<U>>,
-                  conjunction<is_integer<U>, is_cpp_integral_interoperable<T>>>;
+using are_integer_op_types = detail::is_detected<detail::integer_common_t, T, U>;
 
 template <typename T, typename U>
 #if defined(MPPP_HAVE_CONCEPTS)
-concept bool IntegerIntegralOpTypes = are_integer_integral_op_types<T, U>::value;
+MPPP_CONCEPT_DECL IntegerOpTypes = are_integer_op_types<T, U>::value;
 #else
-using integer_integral_op_types_enabler = enable_if_t<are_integer_integral_op_types<T, U>::value, int>;
+using integer_op_types_enabler = detail::enable_if_t<are_integer_op_types<T, U>::value, int>;
+#endif
+
+template <typename T, typename U>
+using are_integer_integral_op_types
+    = detail::disjunction<detail::is_same_ssize_integer<T, U>,
+                          detail::conjunction<detail::is_integer<T>, is_cpp_integral_interoperable<U>>,
+                          detail::conjunction<detail::is_integer<U>, is_cpp_integral_interoperable<T>>>;
+
+template <typename T, typename U>
+#if defined(MPPP_HAVE_CONCEPTS)
+MPPP_CONCEPT_DECL IntegerIntegralOpTypes = are_integer_integral_op_types<T, U>::value;
+#else
+using integer_integral_op_types_enabler = detail::enable_if_t<are_integer_integral_op_types<T, U>::value, int>;
 #endif
 
 /** @defgroup integer_arithmetic integer_arithmetic
  *  @{
  */
 
-inline namespace detail
+namespace detail
 {
 
 // Metaprogramming for selecting the algorithm for static addition. The selection happens via
@@ -3490,8 +3384,7 @@ inline bool static_add_impl(static_int<SSize> &rop, const static_int<SSize> &op1
                             mpz_size_t asize1, mpz_size_t asize2, int sign1, int sign2,
                             const std::integral_constant<int, 1> &)
 {
-    (void)asize1;
-    (void)asize2;
+    ignore(asize1, asize2);
     auto rdata = rop.m_limbs.data();
     auto data1 = op1.m_limbs.data(), data2 = op2.m_limbs.data();
     // NOTE: both asizes have to be 0 or 1 here.
@@ -3656,8 +3549,8 @@ inline integer<SSize> &add(integer<SSize> &rop, const integer<SSize> &op1, const
             rop.set_zero();
             sr = true;
         }
-        if (mppp_likely(
-                static_addsub<true>(rop._get_union().g_st(), op1._get_union().g_st(), op2._get_union().g_st()))) {
+        if (mppp_likely(detail::static_addsub<true>(rop._get_union().g_st(), op1._get_union().g_st(),
+                                                    op2._get_union().g_st()))) {
             return rop;
         }
     }
@@ -3668,7 +3561,7 @@ inline integer<SSize> &add(integer<SSize> &rop, const integer<SSize> &op1, const
     return rop;
 }
 
-inline namespace detail
+namespace detail
 {
 
 // Metaprogramming for selecting the algorithm for static add/sub with a single limb. The selection happens via
@@ -3726,7 +3619,7 @@ inline bool static_addsub_1_impl(static_int<SSize> &rop, const static_int<SSize>
         if (asize1 > 1 || (asize1 == 1 && (data1[0] & GMP_NUMB_MASK) >= l2)) {
             // abs(op1) >= abs(op2).
             const auto br = ::mpn_sub_1(rdata, data1, static_cast<::mp_size_t>(asize1), l2);
-            (void)br;
+            ignore(br);
             assert(!br);
             // The asize can be the original one or original - 1 (we subtracted a limb). If size1 was positive,
             // sign2 has to be negative and we potentially subtract 1, if size1 was negative then sign2 has to be
@@ -3735,7 +3628,7 @@ inline bool static_addsub_1_impl(static_int<SSize> &rop, const static_int<SSize>
         } else {
             // abs(op2) > abs(op1).
             const auto br = ::mpn_sub_1(rdata, &l2, 1, data1[0]);
-            (void)br;
+            ignore(br);
             assert(!br);
             // The size must be +-1, as abs(op2) == abs(op1) is handled above.
             assert((rdata[0] & GMP_NUMB_MASK));
@@ -3844,30 +3737,10 @@ inline bool static_addsub_1(static_int<SSize> &rop, const static_int<SSize> &op1
     }
     return retval;
 }
-} // namespace detail
 
-/// Ternary \link mppp::integer integer\endlink addition with C++ unsigned integral types.
-/**
- * \rststar
- * This function, which sets ``rop`` to ``op1 + op2``, can be a faster
- * alternative to the :cpp:class:`~mppp::integer` addition function
- * if ``op2`` fits in a single limb.
- * \endrststar
- *
- * @param rop the return value.
- * @param op1 the first argument.
- * @param op2 the second argument.
- *
- * @return a reference to \p rop.
- */
-#if defined(MPPP_HAVE_CONCEPTS)
-template <std::size_t SSize>
-inline integer<SSize> &add_ui(integer<SSize> &rop, const integer<SSize> &op1,
-                              const CppUnsignedIntegralInteroperable &op2)
-#else
-template <std::size_t SSize, typename T, cpp_unsigned_integral_interoperable_enabler<T> = 0>
-inline integer<SSize> &add_ui(integer<SSize> &rop, const integer<SSize> &op1, const T &op2)
-#endif
+// Implementation of add_ui().
+template <std::size_t SSize, typename T>
+inline integer<SSize> &add_ui_impl(integer<SSize> &rop, const integer<SSize> &op1, const T &op2)
 {
     if (op2 > GMP_NUMB_MAX) {
         // For the optimised version below to kick in we need to be sure we can safely convert
@@ -3910,11 +3783,46 @@ inline integer<SSize> &add_ui(integer<SSize> &rop, const integer<SSize> &op1, co
         // NOTE: we have 1 allocated limb, with address &op2_copy. The size has to be 1,
         // as op2 is unsigned, fits in an mp_limbt_t and it is not zero (otherwise we would've taken
         // the other branch).
-        const mpz_struct_t tmp_mpz{1, 1, op2_copy};
+        const detail::mpz_struct_t tmp_mpz{1, 1, op2_copy};
         ::mpz_add(&rop._get_union().g_dy(), op1.get_mpz_view(), &tmp_mpz);
         // LCOV_EXCL_STOP
     }
     return rop;
+}
+
+// NOTE: special-case bool in order to avoid spurious compiler warnings when
+// mixing up bool and other integral types.
+template <std::size_t SSize>
+inline integer<SSize> &add_ui_impl(integer<SSize> &rop, const integer<SSize> &op1, bool op2)
+{
+    return add_ui_impl(rop, op1, static_cast<unsigned>(op2));
+}
+
+} // namespace detail
+
+/// Ternary \link mppp::integer integer\endlink addition with C++ unsigned integral types.
+/**
+ * \rststar
+ * This function, which sets ``rop`` to ``op1 + op2``, can be a faster
+ * alternative to the :cpp:class:`~mppp::integer` addition function
+ * if ``op2`` fits in a single limb.
+ * \endrststar
+ *
+ * @param rop the return value.
+ * @param op1 the first argument.
+ * @param op2 the second argument.
+ *
+ * @return a reference to \p rop.
+ */
+#if defined(MPPP_HAVE_CONCEPTS)
+template <std::size_t SSize, CppUnsignedIntegralInteroperable T>
+inline integer<SSize> &add_ui(integer<SSize> &rop, const integer<SSize> &op1, const T &op2)
+#else
+template <std::size_t SSize, typename T, cpp_unsigned_integral_interoperable_enabler<T> = 0>
+inline integer<SSize> &add_ui(integer<SSize> &rop, const integer<SSize> &op1, const T &op2)
+#endif
+{
+    return detail::add_ui_impl(rop, op1, op2);
 }
 
 /// Ternary \link mppp::integer integer\endlink addition with C++ signed integral types.
@@ -3932,17 +3840,17 @@ inline integer<SSize> &add_ui(integer<SSize> &rop, const integer<SSize> &op1, co
  * @return a reference to \p rop.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <std::size_t SSize>
-inline integer<SSize> &add_si(integer<SSize> &rop, const integer<SSize> &op1, const CppSignedIntegralInteroperable &op2)
+template <std::size_t SSize, CppSignedIntegralInteroperable T>
+inline integer<SSize> &add_si(integer<SSize> &rop, const integer<SSize> &op1, const T &op2)
 #else
 template <std::size_t SSize, typename T, cpp_signed_integral_interoperable_enabler<T> = 0>
 inline integer<SSize> &add_si(integer<SSize> &rop, const integer<SSize> &op1, const T &op2)
 #endif
 {
-    if (op2 >= uncvref_t<decltype(op2)>(0)) {
-        return add_ui(rop, op1, make_unsigned(op2));
+    if (op2 >= detail::uncvref_t<decltype(op2)>(0)) {
+        return add_ui(rop, op1, detail::make_unsigned(op2));
     }
-    return sub_ui(rop, op1, nint_abs(op2));
+    return sub_ui(rop, op1, detail::nint_abs(op2));
 }
 
 /// Ternary \link mppp::integer integer\endlink subtraction.
@@ -3965,8 +3873,8 @@ inline integer<SSize> &sub(integer<SSize> &rop, const integer<SSize> &op1, const
             rop.set_zero();
             sr = true;
         }
-        if (mppp_likely(
-                static_addsub<false>(rop._get_union().g_st(), op1._get_union().g_st(), op2._get_union().g_st()))) {
+        if (mppp_likely(detail::static_addsub<false>(rop._get_union().g_st(), op1._get_union().g_st(),
+                                                     op2._get_union().g_st()))) {
             return rop;
         }
     }
@@ -3977,28 +3885,12 @@ inline integer<SSize> &sub(integer<SSize> &rop, const integer<SSize> &op1, const
     return rop;
 }
 
-/// Ternary \link mppp::integer integer\endlink subtraction with C++ unsigned integral types.
-/**
- * \rststar
- * This function, which sets ``rop`` to ``op1 - op2``, can be a faster
- * alternative to the :cpp:class:`~mppp::integer` subtraction function
- * if ``op2`` fits in a single limb.
- * \endrststar
- *
- * @param rop the return value.
- * @param op1 the first argument.
- * @param op2 the second argument.
- *
- * @return a reference to \p rop.
- */
-#if defined(MPPP_HAVE_CONCEPTS)
-template <std::size_t SSize>
-inline integer<SSize> &sub_ui(integer<SSize> &rop, const integer<SSize> &op1,
-                              const CppUnsignedIntegralInteroperable &op2)
-#else
-template <std::size_t SSize, typename T, cpp_unsigned_integral_interoperable_enabler<T> = 0>
-inline integer<SSize> &sub_ui(integer<SSize> &rop, const integer<SSize> &op1, const T &op2)
-#endif
+namespace detail
+{
+
+// Implementation of sub_ui().
+template <std::size_t SSize, typename T>
+inline integer<SSize> &sub_ui_impl(integer<SSize> &rop, const integer<SSize> &op1, const T &op2)
 {
     if (op2 > GMP_NUMB_MASK) {
         MPPP_MAYBE_TLS integer<SSize> tmp;
@@ -4025,11 +3917,46 @@ inline integer<SSize> &sub_ui(integer<SSize> &rop, const integer<SSize> &op1, co
     } else {
         // LCOV_EXCL_START
         ::mp_limb_t op2_copy[1] = {static_cast<::mp_limb_t>(op2)};
-        const mpz_struct_t tmp_mpz{1, 1, op2_copy};
+        const detail::mpz_struct_t tmp_mpz{1, 1, op2_copy};
         ::mpz_sub(&rop._get_union().g_dy(), op1.get_mpz_view(), &tmp_mpz);
         // LCOV_EXCL_STOP
     }
     return rop;
+}
+
+// NOTE: special-case bool in order to avoid spurious compiler warnings when
+// mixing up bool and other integral types.
+template <std::size_t SSize>
+inline integer<SSize> &sub_ui_impl(integer<SSize> &rop, const integer<SSize> &op1, bool op2)
+{
+    return sub_ui_impl(rop, op1, static_cast<unsigned>(op2));
+}
+
+} // namespace detail
+
+/// Ternary \link mppp::integer integer\endlink subtraction with C++ unsigned integral types.
+/**
+ * \rststar
+ * This function, which sets ``rop`` to ``op1 - op2``, can be a faster
+ * alternative to the :cpp:class:`~mppp::integer` subtraction function
+ * if ``op2`` fits in a single limb.
+ * \endrststar
+ *
+ * @param rop the return value.
+ * @param op1 the first argument.
+ * @param op2 the second argument.
+ *
+ * @return a reference to \p rop.
+ */
+#if defined(MPPP_HAVE_CONCEPTS)
+template <std::size_t SSize, CppUnsignedIntegralInteroperable T>
+inline integer<SSize> &sub_ui(integer<SSize> &rop, const integer<SSize> &op1, const T &op2)
+#else
+template <std::size_t SSize, typename T, cpp_unsigned_integral_interoperable_enabler<T> = 0>
+inline integer<SSize> &sub_ui(integer<SSize> &rop, const integer<SSize> &op1, const T &op2)
+#endif
+{
+    return detail::sub_ui_impl(rop, op1, op2);
 }
 
 /// Ternary \link mppp::integer integer\endlink subtraction with C++ signed integral types.
@@ -4047,20 +3974,20 @@ inline integer<SSize> &sub_ui(integer<SSize> &rop, const integer<SSize> &op1, co
  * @return a reference to \p rop.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <std::size_t SSize>
-inline integer<SSize> &sub_si(integer<SSize> &rop, const integer<SSize> &op1, const CppSignedIntegralInteroperable &op2)
+template <std::size_t SSize, CppSignedIntegralInteroperable T>
+inline integer<SSize> &sub_si(integer<SSize> &rop, const integer<SSize> &op1, const T &op2)
 #else
 template <std::size_t SSize, typename T, cpp_signed_integral_interoperable_enabler<T> = 0>
 inline integer<SSize> &sub_si(integer<SSize> &rop, const integer<SSize> &op1, const T &op2)
 #endif
 {
-    if (op2 >= uncvref_t<decltype(op2)>(0)) {
-        return sub_ui(rop, op1, make_unsigned(op2));
+    if (op2 >= detail::uncvref_t<decltype(op2)>(0)) {
+        return sub_ui(rop, op1, detail::make_unsigned(op2));
     }
-    return add_ui(rop, op1, nint_abs(op2));
+    return add_ui(rop, op1, detail::nint_abs(op2));
 }
 
-inline namespace detail
+namespace detail
 {
 
 // The double limb multiplication optimization is available in the following cases:
@@ -4302,7 +4229,7 @@ inline integer<SSize> &mul(integer<SSize> &rop, const integer<SSize> &op1, const
     return rop;
 }
 
-inline namespace detail
+namespace detail
 {
 
 // Selection of the algorithm for addmul: if optimised algorithms exist for both add and mul, then use the
@@ -4511,7 +4438,8 @@ inline integer<SSize> &addmul(integer<SSize> &rop, const integer<SSize> &op1, co
     const bool sr = rop.is_static(), s1 = op1.is_static(), s2 = op2.is_static();
     std::size_t size_hint = 0u;
     if (mppp_likely(sr && s1 && s2)) {
-        size_hint = static_addsubmul<true>(rop._get_union().g_st(), op1._get_union().g_st(), op2._get_union().g_st());
+        size_hint
+            = detail::static_addsubmul<true>(rop._get_union().g_st(), op1._get_union().g_st(), op2._get_union().g_st());
         if (mppp_likely(size_hint == 0u)) {
             return rop;
         }
@@ -4539,7 +4467,8 @@ inline integer<SSize> &submul(integer<SSize> &rop, const integer<SSize> &op1, co
     const bool sr = rop.is_static(), s1 = op1.is_static(), s2 = op2.is_static();
     std::size_t size_hint = 0u;
     if (mppp_likely(sr && s1 && s2)) {
-        size_hint = static_addsubmul<false>(rop._get_union().g_st(), op1._get_union().g_st(), op2._get_union().g_st());
+        size_hint = detail::static_addsubmul<false>(rop._get_union().g_st(), op1._get_union().g_st(),
+                                                    op2._get_union().g_st());
         if (mppp_likely(size_hint == 0u)) {
             return rop;
         }
@@ -4551,7 +4480,7 @@ inline integer<SSize> &submul(integer<SSize> &rop, const integer<SSize> &op1, co
     return rop;
 }
 
-inline namespace detail
+namespace detail
 {
 
 // mpn implementation.
@@ -4580,7 +4509,7 @@ inline std::size_t static_mul_2exp(static_int<SSize> &rop, const static_int<SSiz
     // LCOV_EXCL_START
     if (mppp_unlikely(ls >= nl_max<std::size_t>() - static_cast<std::size_t>(asize))) {
         // NOTE: don't think this can be hit on any setup currently.
-        throw std::overflow_error("A left bitshift value of " + mppp::to_string(s) + " is too large");
+        throw std::overflow_error("A left bitshift value of " + detail::to_string(s) + " is too large");
     }
     // LCOV_EXCL_STOP
     const std::size_t new_asize = static_cast<std::size_t>(asize) + ls;
@@ -4751,7 +4680,7 @@ inline integer<SSize> &mul_2exp(integer<SSize> &rop, const integer<SSize> &n, ::
         // NOTE: we cast to size_t because it's more convenient for reasoning about number of limbs
         // in the implementation functions.
         // NOTE: do it before touching rop, for exception safety.
-        const auto s_size = safe_cast<std::size_t>(s);
+        const auto s_size = detail::safe_cast<std::size_t>(s);
         if (!sr) {
             rop.set_zero();
             sr = true;
@@ -4834,7 +4763,7 @@ inline integer<SSize> abs(const integer<SSize> &n)
  *  @{
  */
 
-inline namespace detail
+namespace detail
 {
 
 // Detect the presence of dual-limb division. This is currently possible only if:
@@ -5095,7 +5024,7 @@ inline void tdiv_qr(integer<SSize> &q, integer<SSize> &r, const integer<SSize> &
     ::mpz_tdiv_qr(&q._get_union().g_dy(), &r._get_union().g_dy(), n.get_mpz_view(), d.get_mpz_view());
 }
 
-inline namespace detail
+namespace detail
 {
 
 // mpn implementation.
@@ -5243,7 +5172,7 @@ inline integer<SSize> &tdiv_q(integer<SSize> &q, const integer<SSize> &n, const 
     return q;
 }
 
-inline namespace detail
+namespace detail
 {
 
 // mpn implementation.
@@ -5277,9 +5206,7 @@ inline void static_divexact_impl(static_int<SSize> &q, const static_int<SSize> &
     }
 #else
     // Avoid compiler warnings for unused parameters.
-    (void)sign1;
-    (void)sign2;
-    (void)asize2;
+    ignore(sign1, sign2, asize2);
 #endif
     // General implementation (via the mpz function).
     MPPP_MAYBE_TLS mpz_raii tmp;
@@ -5402,7 +5329,7 @@ inline integer<SSize> divexact(const integer<SSize> &n, const integer<SSize> &d)
     return retval;
 }
 
-inline namespace detail
+namespace detail
 {
 
 template <std::size_t SSize>
@@ -5484,7 +5411,7 @@ inline integer<SSize> divexact_gcd(const integer<SSize> &n, const integer<SSize>
     return retval;
 }
 
-inline namespace detail
+namespace detail
 {
 
 // mpn implementation.
@@ -5633,16 +5560,12 @@ inline integer<SSize> &tdiv_q_2exp(integer<SSize> &rop, const integer<SSize> &n,
  *  @{
  */
 
-inline namespace detail
+namespace detail
 {
-
-// Selection of the algorithm for static cmp.
-template <typename SInt>
-using integer_static_cmp_algo = std::integral_constant<int, SInt::s_size == 1 ? 1 : (SInt::s_size == 2 ? 2 : 0)>;
 
 // mpn implementation.
 template <std::size_t SSize>
-inline int static_cmp(const static_int<SSize> &n1, const static_int<SSize> &n2, const std::integral_constant<int, 0> &)
+inline int static_cmp(const static_int<SSize> &n1, const static_int<SSize> &n2)
 {
     if (n1._mp_size < n2._mp_size) {
         return -1;
@@ -5652,20 +5575,22 @@ inline int static_cmp(const static_int<SSize> &n1, const static_int<SSize> &n2, 
     }
     // The two sizes are equal, compare the absolute values.
     const auto asize = n1._mp_size >= 0 ? n1._mp_size : -n1._mp_size;
-    if (asize == 0) {
-        // Both operands are zero.
-        // NOTE: we do this special casing in order to avoid calling mpn_cmp() on zero operands. It seems to
-        // work, but the official GMP docs say one is not supposed to call mpn functions on zero operands.
-        return 0;
+    if (asize) {
+        // NOTE: reduce the value of the comparison to the [-1, 1] range, so that
+        // if we need to negate it below we ensure not to run into overflows.
+        const int cmp_abs
+            = integral_sign(::mpn_cmp(n1.m_limbs.data(), n2.m_limbs.data(), static_cast<::mp_size_t>(asize)));
+        // If the values are non-negative, return the comparison of the absolute values, otherwise invert it.
+        return (n1._mp_size >= 0) ? cmp_abs : -cmp_abs;
     }
-    const int cmp_abs = ::mpn_cmp(n1.m_limbs.data(), n2.m_limbs.data(), static_cast<::mp_size_t>(asize));
-    // If the values are non-negative, return the comparison of the absolute values, otherwise invert it.
-    return (n1._mp_size >= 0) ? cmp_abs : -cmp_abs;
+    // Both operands are zero.
+    // NOTE: we do this special casing in order to avoid calling mpn_cmp() on zero operands. It seems to
+    // work, but the official GMP docs say one is not supposed to call mpn functions on zero operands.
+    return 0;
 }
 
 // 1-limb optimisation.
-template <std::size_t SSize>
-inline int static_cmp(const static_int<SSize> &n1, const static_int<SSize> &n2, const std::integral_constant<int, 1> &)
+inline int static_cmp(const static_int<1> &n1, const static_int<1> &n2)
 {
     if (n1._mp_size < n2._mp_size) {
         return -1;
@@ -5681,8 +5606,7 @@ inline int static_cmp(const static_int<SSize> &n1, const static_int<SSize> &n2, 
 }
 
 // 2-limb optimisation.
-template <std::size_t SSize>
-inline int static_cmp(const static_int<SSize> &n1, const static_int<SSize> &n2, const std::integral_constant<int, 2> &)
+inline int static_cmp(const static_int<2> &n1, const static_int<2> &n2)
 {
     if (n1._mp_size < n2._mp_size) {
         return -1;
@@ -5717,8 +5641,7 @@ inline int cmp(const integer<SSize> &op1, const integer<SSize> &op2)
 {
     const bool s1 = op1.is_static(), s2 = op2.is_static();
     if (mppp_likely(s1 && s2)) {
-        return static_cmp(op1._get_union().g_st(), op2._get_union().g_st(),
-                          integer_static_cmp_algo<static_int<SSize>>{});
+        return static_cmp(op1._get_union().g_st(), op2._get_union().g_st());
     }
     return ::mpz_cmp(op1.get_mpz_view(), op2.get_mpz_view());
 }
@@ -5801,7 +5724,7 @@ inline bool is_negative_one(const integer<SSize> &n)
  *  @{
  */
 
-inline namespace detail
+namespace detail
 {
 
 // 1-limb implementation.
@@ -5930,7 +5853,7 @@ inline integer<SSize> &bitwise_not(integer<SSize> &rop, const integer<SSize> &op
     return rop;
 }
 
-inline namespace detail
+namespace detail
 {
 
 // 1-limb implementation.
@@ -6194,7 +6117,7 @@ inline integer<SSize> &bitwise_ior(integer<SSize> &rop, const integer<SSize> &op
     return rop;
 }
 
-inline namespace detail
+namespace detail
 {
 
 // 1-limb implementation.
@@ -6448,7 +6371,7 @@ inline integer<SSize> &bitwise_and(integer<SSize> &rop, const integer<SSize> &op
     return rop;
 }
 
-inline namespace detail
+namespace detail
 {
 
 // 1-limb implementation.
@@ -6716,19 +6639,13 @@ inline integer<SSize> &bitwise_xor(integer<SSize> &rop, const integer<SSize> &op
  *  @{
  */
 
-inline namespace detail
+namespace detail
 {
-
-// Selection of the algorithm for static GCD:
-// - for 1 limb, we have a specialised implementation using mpn_gcd_1(), available everywhere,
-// - otherwise we just use the mpn/mpz functions.
-template <typename SInt>
-using integer_static_gcd_algo = std::integral_constant<int, SInt::s_size == 1 ? 1 : 0>;
 
 // mpn/mpz implementation.
 template <std::size_t SSize>
 inline void static_gcd_impl(static_int<SSize> &rop, const static_int<SSize> &op1, const static_int<SSize> &op2,
-                            mpz_size_t asize1, mpz_size_t asize2, const std::integral_constant<int, 0> &)
+                            mpz_size_t asize1, mpz_size_t asize2)
 {
     // NOTE: performance testing indicates that, even if mpz_gcd() does special casing
     // for zeroes and 1-limb values, it is still worth it to repeat the special casing
@@ -6780,9 +6697,8 @@ inline void static_gcd_impl(static_int<SSize> &rop, const static_int<SSize> &op1
 }
 
 // 1-limb optimization.
-template <std::size_t SSize>
-inline void static_gcd_impl(static_int<SSize> &rop, const static_int<SSize> &op1, const static_int<SSize> &op2,
-                            mpz_size_t asize1, mpz_size_t asize2, const std::integral_constant<int, 1> &)
+inline void static_gcd_impl(static_int<1> &rop, const static_int<1> &op1, const static_int<1> &op2, mpz_size_t asize1,
+                            mpz_size_t asize2)
 {
     // Handle the special cases first.
     if (asize1 == 0) {
@@ -6823,9 +6739,8 @@ inline void static_gcd_impl(static_int<SSize> &rop, const static_int<SSize> &op1
 template <std::size_t SSize>
 inline void static_gcd(static_int<SSize> &rop, const static_int<SSize> &op1, const static_int<SSize> &op2)
 {
-    static_gcd_impl(rop, op1, op2, std::abs(op1._mp_size), std::abs(op2._mp_size),
-                    integer_static_gcd_algo<static_int<SSize>>{});
-    if (integer_static_gcd_algo<static_int<SSize>>::value == 0) {
+    static_gcd_impl(rop, op1, op2, std::abs(op1._mp_size), std::abs(op2._mp_size));
+    if (SSize > 1u) {
         // If we used the generic function, zero the unused limbs on top (if necessary).
         // NOTE: as usual, potential of mpn/mpz use on optimised size (e.g., with 2-limb
         // static ints we are currently invoking mpz_gcd() - this could produce a result
@@ -6898,13 +6813,13 @@ inline integer<SSize> &fac_ui(integer<SSize> &rop, unsigned long n)
     constexpr auto max_fac = 1000000ull;
     if (mppp_unlikely(n > max_fac)) {
         throw std::invalid_argument(
-            "The value " + mppp::to_string(n)
+            "The value " + detail::to_string(n)
             + " is too large to be used as input for the factorial function (the maximum allowed value is "
-            + mppp::to_string(max_fac) + ")");
+            + detail::to_string(max_fac) + ")");
     }
     // NOTE: let's get through a static temporary and then assign it to the rop,
     // so that rop will be static/dynamic according to the size of tmp.
-    MPPP_MAYBE_TLS mpz_raii tmp;
+    MPPP_MAYBE_TLS detail::mpz_raii tmp;
     ::mpz_fac_ui(&tmp.m_mpz, n);
     return rop = &tmp.m_mpz;
 }
@@ -6923,7 +6838,7 @@ inline integer<SSize> &fac_ui(integer<SSize> &rop, unsigned long n)
 template <std::size_t SSize>
 inline integer<SSize> &bin_ui(integer<SSize> &rop, const integer<SSize> &n, unsigned long k)
 {
-    MPPP_MAYBE_TLS mpz_raii tmp;
+    MPPP_MAYBE_TLS detail::mpz_raii tmp;
     ::mpz_bin_ui(&tmp.m_mpz, n.get_mpz_view(), k);
     return rop = &tmp.m_mpz;
 }
@@ -6943,7 +6858,7 @@ inline integer<SSize> bin_ui(const integer<SSize> &n, unsigned long k)
     return retval;
 }
 
-inline namespace detail
+namespace detail
 {
 
 // These helpers are used here and in pow() as well.
@@ -6956,10 +6871,20 @@ inline unsigned long integer_exp_to_ulong(const T &exp)
     // NOTE: make_unsigned_t<T> is T if T is already unsigned.
     // Don't use the make_unsigned() helper, as exp might be
     // unsigned already.
+    static_assert(!std::is_same<T, bool>::value, "Cannot use the bool type in make_unsigned_t.");
     if (mppp_unlikely(static_cast<make_unsigned_t<T>>(exp) > nl_max<unsigned long>())) {
-        throw std::overflow_error("Cannot convert the integral value " + mppp::to_string(exp)
-                                  + " to unsigned long: the value is too large.");
+        throw std::overflow_error("Cannot convert the integral value " + detail::to_string(exp)
+                                  + " to unsigned long: the value is too large");
     }
+    return static_cast<unsigned long>(exp);
+}
+
+// NOTE: special case bool, otherwise we end up invoking make_unsigned_t<bool> in the
+// previous overload, which is not well-defined:
+// https://en.cppreference.com/w/cpp/types/make_unsigned
+inline unsigned long integer_exp_to_ulong(bool exp)
+{
+
     return static_cast<unsigned long>(exp);
 }
 
@@ -6971,7 +6896,7 @@ inline unsigned long integer_exp_to_ulong(const integer<SSize> &exp)
     } catch (const std::overflow_error &) {
         // Rewrite the error message.
         throw std::overflow_error("Cannot convert the integral value " + exp.to_string()
-                                  + " to unsigned long: the value is too large.");
+                                  + " to unsigned long: the value is too large");
     }
 }
 
@@ -7034,17 +6959,17 @@ inline integer<SSize> binomial_impl(const T &n, const integer<SSize> &k)
  * @throws std::overflow_error if \p k is outside an implementation-defined range.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline auto binomial(const IntegerIntegralOpTypes<T> &n, const T &k)
+template <typename T, typename U>
+requires IntegerIntegralOpTypes<T, U> inline auto binomial(const T &n, const U &k)
 #else
 template <typename T, typename U, integer_integral_op_types_enabler<T, U> = 0>
-inline integer_common_t<T, U> binomial(const T &n, const U &k)
+inline detail::integer_common_t<T, U> binomial(const T &n, const U &k)
 #endif
 {
-    return binomial_impl(n, k);
+    return detail::binomial_impl(n, k);
 }
 
-inline namespace detail
+namespace detail
 {
 
 template <std::size_t SSize>
@@ -7070,7 +6995,7 @@ template <std::size_t SSize>
 inline integer<SSize> &nextprime(integer<SSize> &rop, const integer<SSize> &n)
 {
     // NOTE: nextprime on negative numbers always returns 2.
-    nextprime_impl(rop, n);
+    detail::nextprime_impl(rop, n);
     return rop;
 }
 
@@ -7084,7 +7009,7 @@ template <std::size_t SSize>
 inline integer<SSize> nextprime(const integer<SSize> &n)
 {
     integer<SSize> retval;
-    nextprime_impl(retval, n);
+    detail::nextprime_impl(retval, n);
     return retval;
 }
 
@@ -7126,7 +7051,7 @@ inline int probab_prime_p(const integer<SSize> &n, int reps = 25)
 template <std::size_t SSize>
 inline integer<SSize> &pow_ui(integer<SSize> &rop, const integer<SSize> &base, unsigned long exp)
 {
-    MPPP_MAYBE_TLS mpz_raii tmp;
+    MPPP_MAYBE_TLS detail::mpz_raii tmp;
     ::mpz_pow_ui(&tmp.m_mpz, base.get_mpz_view(), exp);
     return rop = &tmp.m_mpz;
 }
@@ -7146,7 +7071,7 @@ inline integer<SSize> pow_ui(const integer<SSize> &base, unsigned long exp)
     return retval;
 }
 
-inline namespace detail
+namespace detail
 {
 
 // Various helpers for the implementation of pow().
@@ -7173,7 +7098,7 @@ inline integer<SSize> pow_impl(const integer<SSize> &base, const T &exp)
         pow_ui(rop, base, integer_exp_to_ulong(exp));
     } else if (mppp_unlikely(is_zero(base))) {
         // 0**-n is a division by zero.
-        throw zero_division_error("Cannot raise zero to the negative power " + mppp::to_string(exp));
+        throw zero_division_error("Cannot raise zero to the negative power " + detail::to_string(exp));
     } else if (base.is_one()) {
         // 1**n == 1.
         rop = 1;
@@ -7234,19 +7159,19 @@ inline T pow_impl(const T &base, const integer<SSize> &exp)
  * @throws zero_division_error if \p base and \p exp are integrals and \p base is zero and \p exp is negative.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline auto pow(const IntegerOpTypes<T> &base, const T &exp)
+template <typename T, typename U>
+requires IntegerOpTypes<T, U> inline auto pow(const T &base, const U &exp)
 #else
 template <typename T, typename U>
-inline integer_common_t<T, U> pow(const T &base, const U &exp)
+inline detail::integer_common_t<T, U> pow(const T &base, const U &exp)
 #endif
 {
-    return pow_impl(base, exp);
+    return detail::pow_impl(base, exp);
 }
 
 /** @} */
 
-inline namespace detail
+namespace detail
 {
 
 // Implementation of sqrt.
@@ -7302,7 +7227,7 @@ inline void sqrt_impl(integer<SSize> &rop, const integer<SSize> &n)
 template <std::size_t SSize>
 inline integer<SSize> &sqrt(integer<SSize> &rop, const integer<SSize> &n)
 {
-    sqrt_impl(rop, n);
+    detail::sqrt_impl(rop, n);
     return rop;
 }
 
@@ -7311,11 +7236,11 @@ template <std::size_t SSize>
 inline integer<SSize> sqrt(const integer<SSize> &n)
 {
     integer<SSize> retval;
-    sqrt_impl(retval, n);
+    detail::sqrt_impl(retval, n);
     return retval;
 }
 
-inline namespace detail
+namespace detail
 {
 
 // Static sqrtrem implementation.
@@ -7429,7 +7354,7 @@ inline bool root(integer<SSize> &rop, const integer<SSize> &n, unsigned long m)
         throw std::domain_error("Cannot compute the integer root of degree " + std::to_string(m)
                                 + " of the negative number " + n.to_string());
     }
-    MPPP_MAYBE_TLS mpz_raii tmp;
+    MPPP_MAYBE_TLS detail::mpz_raii tmp;
     const auto ret = ::mpz_root(&tmp.m_mpz, n.get_mpz_view(), m);
     rop = &tmp.m_mpz;
     return ret != 0;
@@ -7455,8 +7380,8 @@ inline void rootrem(integer<SSize> &rop, integer<SSize> &rem, const integer<SSiz
         throw std::domain_error("Cannot compute the integer root with remainder of degree " + std::to_string(m)
                                 + " of the negative number " + n.to_string());
     }
-    MPPP_MAYBE_TLS mpz_raii tmp_rop;
-    MPPP_MAYBE_TLS mpz_raii tmp_rem;
+    MPPP_MAYBE_TLS detail::mpz_raii tmp_rop;
+    MPPP_MAYBE_TLS detail::mpz_raii tmp_rem;
     ::mpz_rootrem(&tmp_rop.m_mpz, &tmp_rem.m_mpz, n.get_mpz_view(), m);
     rop = &tmp_rop.m_mpz;
     rem = &tmp_rem.m_mpz;
@@ -7469,53 +7394,54 @@ inline bool perfect_power_p(const integer<SSize> &n)
     return ::mpz_perfect_power_p(n.get_mpz_view()) != 0;
 }
 
-/** @defgroup integer_io integer_io
- *  @{
- */
+namespace detail
+{
 
-/// Output stream operator.
-/**
- * \rststar
- * This operator will print to the stream ``os`` the :cpp:class:`~mppp::integer` ``n`` in base 10. Internally it uses
- * the :cpp:func:`mppp::integer::to_string()` method.
- * \endrststar
- *
- * @param os the target stream.
- * @param n the input integer.
- *
- * @return a reference to \p os.
- *
- * @throws unspecified any exception thrown by integer::to_string().
- */
+// Helper to get the base from a stream's flags.
+inline int stream_flags_to_base(std::ios_base::fmtflags flags)
+{
+    switch (flags & std::ios_base::basefield) {
+        case std::ios_base::dec:
+            return 10;
+        case std::ios_base::hex:
+            return 16;
+        case std::ios_base::oct:
+            return 8;
+        default:
+            // NOTE: in case more than one base
+            // flag is set, or no base flags are set,
+            // just use 10.
+            return 10;
+    }
+}
+
+// Helper to get the fill type from a stream's flags.
+inline int stream_flags_to_fill(std::ios_base::fmtflags flags)
+{
+    switch (flags & std::ios_base::adjustfield) {
+        case std::ios_base::left:
+            return 1;
+        case std::ios_base::right:
+            return 2;
+        case std::ios_base::internal:
+            return 3;
+        default:
+            // NOTE: assume right fill if no fill is set,
+            // or if multiple values are set.
+            return 2;
+    }
+}
+
+MPPP_DLL_PUBLIC std::ostream &integer_stream_operator_impl(std::ostream &, const mpz_struct_t *, int);
+
+} // namespace detail
+
+// Output stream operator.
 template <std::size_t SSize>
 inline std::ostream &operator<<(std::ostream &os, const integer<SSize> &n)
 {
-    return os << n.to_string();
+    return detail::integer_stream_operator_impl(os, n.get_mpz_view(), n.sgn());
 }
-
-/// Input stream operator.
-/**
- * \rststar
- * This operator is equivalent to extracting a line from the stream and assigning it to ``n``.
- * \endrststar
- *
- * @param is the input stream.
- * @param n the integer to which the string extracted from the stream will be assigned.
- *
- * @return a reference to \p is.
- *
- * @throws unspecified any exception thrown by \link mppp::integer integer\endlink's assignment operator from string.
- */
-template <std::size_t SSize>
-inline std::istream &operator>>(std::istream &is, integer<SSize> &n)
-{
-    MPPP_MAYBE_TLS std::string tmp_str;
-    std::getline(is, tmp_str);
-    n = tmp_str;
-    return is;
-}
-
-/** @} */
 
 /** @defgroup integer_s11n integer_s11n
  *  @{
@@ -7540,12 +7466,10 @@ inline std::size_t binary_size(const integer<SSize> &n)
     return n.binary_size();
 }
 
-inline namespace detail
+namespace detail
 {
 
 // Detector for the presence of binary_save().
-// NOTE: we use declval<T>() (rather than declval<T &>()) because T will be the result
-// of perfect forwarding.
 template <typename T, typename Integer>
 using integer_binary_save_t = decltype(std::declval<const Integer &>().binary_save(std::declval<T>()));
 
@@ -7553,29 +7477,28 @@ template <typename T, std::size_t SSize>
 using has_integer_binary_save = is_detected<integer_binary_save_t, T, integer<SSize>>;
 
 // Detector for the presence of binary_load().
-// NOTE: we use declval<T>() (rather than declval<T &>()) because T will be the result
-// of perfect forwarding.
 template <typename T, typename Integer>
 using integer_binary_load_t = decltype(std::declval<Integer &>().binary_load(std::declval<T>()));
 
 template <typename T, std::size_t SSize>
 using has_integer_binary_load = is_detected<integer_binary_load_t, T, integer<SSize>>;
+
 } // namespace detail
 
 #if !defined(MPPP_DOXYGEN_INVOKED)
 
 template <typename T, std::size_t SSize>
 #if defined(MPPP_HAVE_CONCEPTS)
-concept bool IntegerBinarySaveDest = has_integer_binary_save<T, SSize>::value;
+MPPP_CONCEPT_DECL IntegerBinarySaveDest = detail::has_integer_binary_save<T, SSize>::value;
 #else
-using integer_binary_save_enabler = enable_if_t<has_integer_binary_save<T, SSize>::value, int>;
+using integer_binary_save_enabler = detail::enable_if_t<detail::has_integer_binary_save<T, SSize>::value, int>;
 #endif
 
 template <typename T, std::size_t SSize>
 #if defined(MPPP_HAVE_CONCEPTS)
-concept bool IntegerBinaryLoadSrc = has_integer_binary_load<T, SSize>::value;
+MPPP_CONCEPT_DECL IntegerBinaryLoadSrc = detail::has_integer_binary_load<T, SSize>::value;
 #else
-using integer_binary_load_enabler = enable_if_t<has_integer_binary_load<T, SSize>::value, int>;
+using integer_binary_load_enabler = detail::enable_if_t<detail::has_integer_binary_load<T, SSize>::value, int>;
 #endif
 
 #endif
@@ -7597,14 +7520,13 @@ using integer_binary_load_enabler = enable_if_t<has_integer_binary_load<T, SSize
  * @throws unspecified any exception thrown by the invoked mppp::integer::binary_save() overload.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <std::size_t SSize>
-inline std::size_t binary_save(const integer<SSize> &n, IntegerBinarySaveDest<SSize> &&dest)
+template <std::size_t SSize, IntegerBinarySaveDest<SSize> T>
 #else
-template <std::size_t SSize, typename T, integer_binary_save_enabler<T &&, SSize> = 0>
-inline std::size_t binary_save(const integer<SSize> &n, T &&dest)
+template <std::size_t SSize, typename T, integer_binary_save_enabler<T, SSize> = 0>
 #endif
+inline std::size_t binary_save(const integer<SSize> &n, T &&dest)
 {
-    return n.binary_save(std::forward<decltype(dest)>(dest));
+    return n.binary_save(std::forward<T>(dest));
 }
 
 /// Load an \link mppp::integer integer\endlink in binary format.
@@ -7624,14 +7546,13 @@ inline std::size_t binary_save(const integer<SSize> &n, T &&dest)
  * @throws unspecified any exception thrown by the invoked mppp::integer::binary_load() overload.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <std::size_t SSize>
-inline std::size_t binary_load(integer<SSize> &n, IntegerBinaryLoadSrc<SSize> &&src)
+template <std::size_t SSize, IntegerBinaryLoadSrc<SSize> T>
 #else
-template <std::size_t SSize, typename T, integer_binary_load_enabler<T &&, SSize> = 0>
-inline std::size_t binary_load(integer<SSize> &n, T &&src)
+template <std::size_t SSize, typename T, integer_binary_load_enabler<T, SSize> = 0>
 #endif
+inline std::size_t binary_load(integer<SSize> &n, T &&src)
 {
-    return n.binary_load(std::forward<decltype(src)>(src));
+    return n.binary_load(std::forward<T>(src));
 }
 
 /** @} */
@@ -7657,8 +7578,9 @@ inline std::size_t binary_load(integer<SSize> &n, T &&src)
 template <std::size_t SSize>
 inline std::size_t hash(const integer<SSize> &n)
 {
-    const mpz_size_t size = n._get_union().m_st._mp_size;
-    const std::size_t asize = size >= 0 ? static_cast<std::size_t>(size) : static_cast<std::size_t>(nint_abs(size));
+    const detail::mpz_size_t size = n._get_union().m_st._mp_size;
+    const std::size_t asize
+        = size >= 0 ? static_cast<std::size_t>(size) : static_cast<std::size_t>(detail::nint_abs(size));
     const ::mp_limb_t *ptr
         = n._get_union().is_static() ? n._get_union().g_st().m_limbs.data() : n._get_union().g_dy()._mp_d;
     // Init the retval as the signed size.
@@ -7686,12 +7608,7 @@ inline std::size_t hash(const integer<SSize> &n)
  * It is safe to call this function concurrently from different threads.
  * \endrststar
  */
-inline void free_integer_caches()
-{
-#if defined(MPPP_HAVE_THREAD_LOCAL)
-    get_mpz_alloc_cache().clear();
-#endif
-}
+MPPP_DLL_PUBLIC void free_integer_caches();
 
 /** @} */
 
@@ -7699,7 +7616,7 @@ inline void free_integer_caches()
  *  @{
  */
 
-inline namespace detail
+namespace detail
 {
 
 // Dispatching for the binary addition operator.
@@ -7811,14 +7728,14 @@ inline integer<SSize> operator+(const integer<SSize> &n)
  * @return <tt>op1 + op2</tt>.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline auto operator+(const IntegerOpTypes<T> &op1, const T &op2)
+template <typename T, typename U>
+requires IntegerOpTypes<T, U> inline auto operator+(const T &op1, const U &op2)
 #else
 template <typename T, typename U>
-inline integer_common_t<T, U> operator+(const T &op1, const U &op2)
+inline detail::integer_common_t<T, U> operator+(const T &op1, const U &op2)
 #endif
 {
-    return dispatch_binary_add(op1, op2);
+    return detail::dispatch_binary_add(op1, op2);
 }
 
 /// In-place addition operator.
@@ -7832,14 +7749,14 @@ inline integer_common_t<T, U> operator+(const T &op1, const U &op2)
  * by the conversion operator of \link mppp::integer integer\endlink.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline auto &operator+=(IntegerOpTypes<T> &rop, const T &op)
+template <typename T, typename U>
+requires IntegerOpTypes<T, U>
 #else
 template <typename T, typename U, integer_op_types_enabler<T, U> = 0>
-inline T &operator+=(T &rop, const U &op)
 #endif
+    inline T &operator+=(T &rop, const U &op)
 {
-    dispatch_in_place_add(rop, op);
+    detail::dispatch_in_place_add(rop, op);
     return rop;
 }
 
@@ -7874,7 +7791,7 @@ inline integer<SSize> operator++(integer<SSize> &n, int)
     return retval;
 }
 
-inline namespace detail
+namespace detail
 {
 
 // Dispatching for the binary subtraction operator.
@@ -7985,14 +7902,14 @@ integer<SSize> operator-(const integer<SSize> &n)
  * @return <tt>op1 - op2</tt>.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline auto operator-(const IntegerOpTypes<T> &op1, const T &op2)
+template <typename T, typename U>
+requires IntegerOpTypes<T, U> inline auto operator-(const T &op1, const U &op2)
 #else
 template <typename T, typename U>
-inline integer_common_t<T, U> operator-(const T &op1, const U &op2)
+inline detail::integer_common_t<T, U> operator-(const T &op1, const U &op2)
 #endif
 {
-    return dispatch_binary_sub(op1, op2);
+    return detail::dispatch_binary_sub(op1, op2);
 }
 
 /// In-place subtraction operator.
@@ -8006,14 +7923,14 @@ inline integer_common_t<T, U> operator-(const T &op1, const U &op2)
  * by the conversion operator of \link mppp::integer integer\endlink.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline auto &operator-=(IntegerOpTypes<T> &rop, const T &op)
+template <typename T, typename U>
+requires IntegerOpTypes<T, U>
 #else
 template <typename T, typename U, integer_op_types_enabler<T, U> = 0>
-inline T &operator-=(T &rop, const U &op)
 #endif
+    inline T &operator-=(T &rop, const U &op)
 {
-    dispatch_in_place_sub(rop, op);
+    detail::dispatch_in_place_sub(rop, op);
     return rop;
 }
 
@@ -8048,7 +7965,7 @@ inline integer<SSize> operator--(integer<SSize> &n, int)
     return retval;
 }
 
-inline namespace detail
+namespace detail
 {
 
 // Dispatching for the binary multiplication operator.
@@ -8132,14 +8049,14 @@ inline void dispatch_in_place_mul(T &rop, const integer<SSize> &op)
  * @return <tt>op1 * op2</tt>.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline auto operator*(const IntegerOpTypes<T> &op1, const T &op2)
+template <typename T, typename U>
+requires IntegerOpTypes<T, U> inline auto operator*(const T &op1, const U &op2)
 #else
 template <typename T, typename U>
-inline integer_common_t<T, U> operator*(const T &op1, const U &op2)
+inline detail::integer_common_t<T, U> operator*(const T &op1, const U &op2)
 #endif
 {
-    return dispatch_binary_mul(op1, op2);
+    return detail::dispatch_binary_mul(op1, op2);
 }
 
 /// In-place multiplication operator.
@@ -8153,18 +8070,18 @@ inline integer_common_t<T, U> operator*(const T &op1, const U &op2)
  * by the conversion operator of \link mppp::integer integer\endlink.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline auto &operator*=(IntegerOpTypes<T> &rop, const T &op)
+template <typename T, typename U>
+requires IntegerOpTypes<T, U>
 #else
 template <typename T, typename U, integer_op_types_enabler<T, U> = 0>
-inline T &operator*=(T &rop, const U &op)
 #endif
+    inline T &operator*=(T &rop, const U &op)
 {
-    dispatch_in_place_mul(rop, op);
+    detail::dispatch_in_place_mul(rop, op);
     return rop;
 }
 
-inline namespace detail
+namespace detail
 {
 
 // Dispatching for the binary division operator.
@@ -8295,14 +8212,14 @@ inline void dispatch_in_place_mod(T &rop, const integer<SSize> &op)
  * @throws zero_division_error if \p d is zero and only integral types are involved in the division.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline auto operator/(const IntegerOpTypes<T> &n, const T &d)
+template <typename T, typename U>
+requires IntegerOpTypes<T, U> inline auto operator/(const T &n, const U &d)
 #else
 template <typename T, typename U>
-inline integer_common_t<T, U> operator/(const T &n, const U &d)
+inline detail::integer_common_t<T, U> operator/(const T &n, const U &d)
 #endif
 {
-    return dispatch_binary_div(n, d);
+    return detail::dispatch_binary_div(n, d);
 }
 
 /// In-place division operator.
@@ -8317,14 +8234,14 @@ inline integer_common_t<T, U> operator/(const T &n, const U &d)
  * by the conversion operator of \link mppp::integer integer\endlink.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline auto &operator/=(IntegerOpTypes<T> &rop, const T &op)
+template <typename T, typename U>
+requires IntegerOpTypes<T, U>
 #else
 template <typename T, typename U, integer_op_types_enabler<T, U> = 0>
-inline T &operator/=(T &rop, const U &op)
 #endif
+    inline T &operator/=(T &rop, const U &op)
 {
-    dispatch_in_place_div(rop, op);
+    detail::dispatch_in_place_div(rop, op);
     return rop;
 }
 
@@ -8342,14 +8259,14 @@ inline T &operator/=(T &rop, const U &op)
  * @throws zero_division_error if \p d is zero.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline auto operator%(const IntegerIntegralOpTypes<T> &n, const T &d)
+template <typename T, typename U>
+requires IntegerIntegralOpTypes<T, U> inline auto operator%(const T &n, const U &d)
 #else
 template <typename T, typename U, integer_integral_op_types_enabler<T, U> = 0>
-inline integer_common_t<T, U> operator%(const T &n, const U &d)
+inline detail::integer_common_t<T, U> operator%(const T &n, const U &d)
 #endif
 {
-    return dispatch_binary_mod(n, d);
+    return detail::dispatch_binary_mod(n, d);
 }
 
 /// In-place modulo operator.
@@ -8363,14 +8280,14 @@ inline integer_common_t<T, U> operator%(const T &n, const U &d)
  * @throws unspecified any exception thrown by the conversion operator of \link mppp::integer integer\endlink.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline auto &operator%=(IntegerIntegralOpTypes<T> &rop, const T &op)
+template <typename T, typename U>
+requires IntegerIntegralOpTypes<T, U>
 #else
 template <typename T, typename U, integer_integral_op_types_enabler<T, U> = 0>
-inline T &operator%=(T &rop, const U &op)
 #endif
+    inline T &operator%=(T &rop, const U &op)
 {
-    dispatch_in_place_mod(rop, op);
+    detail::dispatch_in_place_mod(rop, op);
     return rop;
 }
 
@@ -8384,15 +8301,14 @@ inline T &operator%=(T &rop, const U &op)
  * @throws std::overflow_error if \p s is negative or larger than an implementation-defined value.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <std::size_t SSize>
-inline integer<SSize> operator<<(const integer<SSize> &n, CppIntegralInteroperable s)
+template <CppIntegralInteroperable T, std::size_t SSize>
 #else
 template <typename T, std::size_t SSize, cpp_integral_interoperable_enabler<T> = 0>
-inline integer<SSize> operator<<(const integer<SSize> &n, T s)
 #endif
+inline integer<SSize> operator<<(const integer<SSize> &n, T s)
 {
     integer<SSize> retval;
-    mul_2exp(retval, n, safe_cast<::mp_bitcnt_t>(s));
+    mul_2exp(retval, n, detail::safe_cast<::mp_bitcnt_t>(s));
     return retval;
 }
 
@@ -8406,14 +8322,13 @@ inline integer<SSize> operator<<(const integer<SSize> &n, T s)
  * @throws std::overflow_error if \p s is negative or larger than an implementation-defined value.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <std::size_t SSize>
-inline integer<SSize> &operator<<=(integer<SSize> &rop, CppIntegralInteroperable s)
+template <CppIntegralInteroperable T, std::size_t SSize>
 #else
 template <typename T, std::size_t SSize, cpp_integral_interoperable_enabler<T> = 0>
-inline integer<SSize> &operator<<=(integer<SSize> &rop, T s)
 #endif
+inline integer<SSize> &operator<<=(integer<SSize> &rop, T s)
 {
-    mul_2exp(rop, rop, safe_cast<::mp_bitcnt_t>(s));
+    mul_2exp(rop, rop, detail::safe_cast<::mp_bitcnt_t>(s));
     return rop;
 }
 
@@ -8427,15 +8342,14 @@ inline integer<SSize> &operator<<=(integer<SSize> &rop, T s)
  * @throws std::overflow_error if \p s is negative or larger than an implementation-defined value.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <std::size_t SSize>
-inline integer<SSize> operator>>(const integer<SSize> &n, CppIntegralInteroperable s)
+template <CppIntegralInteroperable T, std::size_t SSize>
 #else
 template <typename T, std::size_t SSize, cpp_integral_interoperable_enabler<T> = 0>
-inline integer<SSize> operator>>(const integer<SSize> &n, T s)
 #endif
+inline integer<SSize> operator>>(const integer<SSize> &n, T s)
 {
     integer<SSize> retval;
-    tdiv_q_2exp(retval, n, safe_cast<::mp_bitcnt_t>(s));
+    tdiv_q_2exp(retval, n, detail::safe_cast<::mp_bitcnt_t>(s));
     return retval;
 }
 
@@ -8449,18 +8363,17 @@ inline integer<SSize> operator>>(const integer<SSize> &n, T s)
  * @throws std::overflow_error if \p s is negative or larger than an implementation-defined value.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <std::size_t SSize>
-inline integer<SSize> &operator>>=(integer<SSize> &rop, CppIntegralInteroperable s)
+template <CppIntegralInteroperable T, std::size_t SSize>
 #else
 template <typename T, std::size_t SSize, cpp_integral_interoperable_enabler<T> = 0>
-inline integer<SSize> &operator>>=(integer<SSize> &rop, T s)
 #endif
+inline integer<SSize> &operator>>=(integer<SSize> &rop, T s)
 {
-    tdiv_q_2exp(rop, rop, safe_cast<::mp_bitcnt_t>(s));
+    tdiv_q_2exp(rop, rop, detail::safe_cast<::mp_bitcnt_t>(s));
     return rop;
 }
 
-inline namespace detail
+namespace detail
 {
 
 // Equality operator.
@@ -8508,10 +8421,73 @@ inline bool dispatch_equality(T x, const integer<SSize> &a)
 }
 
 // Less-than operator.
-template <std::size_t SSize>
-inline bool dispatch_less_than(const integer<SSize> &a, const integer<SSize> &b)
+
+// 1-limb specialisation.
+inline bool static_less_than(const static_int<1> &op1, const static_int<1> &op2)
 {
-    return cmp(a, b) < 0;
+    // NOTE: an implementation with 1 branch less and similar performance
+    // is available at fdb84f57027ebf579a380f07501435eb17fd6db1.
+
+    const auto size1 = op1._mp_size, size2 = op2._mp_size;
+
+    // Compare sizes.
+    // NOTE: under the assumption that we have positive/negative
+    // integers with equal probability, it makes sense to check
+    // for the sizes first.
+    if (size1 < size2) {
+        return true;
+    }
+    if (size1 > size2) {
+        return false;
+    }
+
+    // Sizes are equal, compare the only limb.
+    const auto l1 = op1.m_limbs[0] & GMP_NUMB_MASK;
+    const auto l2 = op2.m_limbs[0] & GMP_NUMB_MASK;
+
+    const auto lt = l1 < l2;
+    const auto gt = l1 > l2;
+
+    // NOTE: as usual, this branchless formulation is slightly
+    // better for signed ints, slightly worse for unsigned
+    // (wrt an if statement).
+    return (size1 >= 0 && lt) || (size1 < 0 && gt);
+}
+
+// mpn implementation.
+template <std::size_t SSize>
+inline bool static_less_than(const static_int<SSize> &n1, const static_int<SSize> &n2)
+{
+    const auto size1 = n1._mp_size, size2 = n2._mp_size;
+
+    // Compare sizes.
+    if (size1 < size2) {
+        return true;
+    }
+    if (size1 > size2) {
+        return false;
+    }
+
+    // The two sizes are equal, compare the absolute values.
+    if (size1) {
+        const int cmp_abs = ::mpn_cmp(n1.m_limbs.data(), n2.m_limbs.data(), static_cast<::mp_size_t>(std::abs(size1)));
+        return (size1 >= 0 && cmp_abs < 0) || (size1 < 0 && cmp_abs > 0);
+    }
+    // Both operands are zero.
+    // NOTE: we do this special casing in order to avoid calling mpn_cmp() on zero operands. It seems to
+    // work, but the official GMP docs say one is not supposed to call mpn functions on zero operands.
+    return false;
+}
+
+template <std::size_t SSize>
+inline bool dispatch_less_than(const integer<SSize> &op1, const integer<SSize> &op2)
+{
+    const bool s1 = op1.is_static(), s2 = op2.is_static();
+    if (mppp_likely(s1 && s2)) {
+        return static_less_than(op1._get_union().g_st(), op2._get_union().g_st());
+    }
+
+    return ::mpz_cmp(op1.get_mpz_view(), op2.get_mpz_view()) < 0;
 }
 
 template <typename T, std::size_t SSize, enable_if_t<is_cpp_integral_interoperable<T>::value, int> = 0>
@@ -8521,10 +8497,7 @@ inline bool dispatch_less_than(const integer<SSize> &a, T n)
 }
 
 template <typename T, std::size_t SSize, enable_if_t<is_cpp_integral_interoperable<T>::value, int> = 0>
-inline bool dispatch_less_than(T n, const integer<SSize> &a)
-{
-    return dispatch_greater_than(a, integer<SSize>{n});
-}
+bool dispatch_less_than(T, const integer<SSize> &);
 
 template <typename T, std::size_t SSize, enable_if_t<is_cpp_floating_point_interoperable<T>::value, int> = 0>
 inline bool dispatch_less_than(const integer<SSize> &a, T x)
@@ -8533,16 +8506,59 @@ inline bool dispatch_less_than(const integer<SSize> &a, T x)
 }
 
 template <typename T, std::size_t SSize, enable_if_t<is_cpp_floating_point_interoperable<T>::value, int> = 0>
-inline bool dispatch_less_than(T x, const integer<SSize> &a)
-{
-    return dispatch_greater_than(a, x);
-}
+bool dispatch_less_than(T, const integer<SSize> &);
 
 // Greater-than operator.
-template <std::size_t SSize>
-inline bool dispatch_greater_than(const integer<SSize> &a, const integer<SSize> &b)
+
+// NOTE: this is essentially the same as static_less_than.
+inline bool static_greater_than(const static_int<1> &op1, const static_int<1> &op2)
 {
-    return cmp(a, b) > 0;
+    const auto size1 = op1._mp_size, size2 = op2._mp_size;
+
+    if (size1 > size2) {
+        return true;
+    }
+    if (size1 < size2) {
+        return false;
+    }
+
+    const auto l1 = op1.m_limbs[0] & GMP_NUMB_MASK;
+    const auto l2 = op2.m_limbs[0] & GMP_NUMB_MASK;
+
+    const auto lt = l1 < l2;
+    const auto gt = l1 > l2;
+
+    return (size1 >= 0 && gt) || (size1 < 0 && lt);
+}
+
+template <std::size_t SSize>
+inline bool static_greater_than(const static_int<SSize> &n1, const static_int<SSize> &n2)
+{
+    const auto size1 = n1._mp_size, size2 = n2._mp_size;
+
+    if (size1 > size2) {
+        return true;
+    }
+    if (size1 < size2) {
+        return false;
+    }
+
+    if (size1) {
+        const int cmp_abs = ::mpn_cmp(n1.m_limbs.data(), n2.m_limbs.data(), static_cast<::mp_size_t>(std::abs(size1)));
+        return (size1 >= 0 && cmp_abs > 0) || (size1 < 0 && cmp_abs < 0);
+    }
+    return false;
+}
+
+template <std::size_t SSize>
+inline bool dispatch_greater_than(const integer<SSize> &op1, const integer<SSize> &op2)
+{
+    const bool s1 = op1.is_static(), s2 = op2.is_static();
+    if (mppp_likely(s1 && s2)) {
+        return static_greater_than(op1._get_union().g_st(), op2._get_union().g_st());
+    }
+
+    return ::mpz_cmp(op1.get_mpz_view(), op2.get_mpz_view()) > 0;
 }
 
 template <typename T, std::size_t SSize, enable_if_t<is_cpp_integral_interoperable<T>::value, int> = 0>
@@ -8568,6 +8584,19 @@ inline bool dispatch_greater_than(T x, const integer<SSize> &a)
 {
     return dispatch_less_than(a, x);
 }
+
+// NOTE: implement these here as we need visibility of dispatch_greater_than().
+template <typename T, std::size_t SSize, enable_if_t<is_cpp_integral_interoperable<T>::value, int>>
+inline bool dispatch_less_than(T n, const integer<SSize> &a)
+{
+    return dispatch_greater_than(a, integer<SSize>{n});
+}
+
+template <typename T, std::size_t SSize, enable_if_t<is_cpp_floating_point_interoperable<T>::value, int>>
+inline bool dispatch_less_than(T x, const integer<SSize> &a)
+{
+    return dispatch_greater_than(a, x);
+}
 } // namespace detail
 
 /// Equality operator.
@@ -8578,14 +8607,14 @@ inline bool dispatch_greater_than(T x, const integer<SSize> &a)
  * @return \p true if <tt>op1 == op2</tt>, \p false otherwise.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline bool operator==(const IntegerOpTypes<T> &op1, const T &op2)
+template <typename T, typename U>
+requires IntegerOpTypes<T, U>
 #else
 template <typename T, typename U, integer_op_types_enabler<T, U> = 0>
-inline bool operator==(const T &op1, const U &op2)
 #endif
+    inline bool operator==(const T &op1, const U &op2)
 {
-    return dispatch_equality(op1, op2);
+    return detail::dispatch_equality(op1, op2);
 }
 
 /// Inequality operator.
@@ -8596,12 +8625,12 @@ inline bool operator==(const T &op1, const U &op2)
  * @return \p true if <tt>op1 != op2</tt>, \p false otherwise.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline bool operator!=(const IntegerOpTypes<T> &op1, const T &op2)
+template <typename T, typename U>
+requires IntegerOpTypes<T, U>
 #else
 template <typename T, typename U, integer_op_types_enabler<T, U> = 0>
-inline bool operator!=(const T &op1, const U &op2)
 #endif
+    inline bool operator!=(const T &op1, const U &op2)
 {
     return !(op1 == op2);
 }
@@ -8614,14 +8643,14 @@ inline bool operator!=(const T &op1, const U &op2)
  * @return \p true if <tt>op1 < op2</tt>, \p false otherwise.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline bool operator<(const IntegerOpTypes<T> &op1, const T &op2)
+template <typename T, typename U>
+requires IntegerOpTypes<T, U>
 #else
 template <typename T, typename U, integer_op_types_enabler<T, U> = 0>
-inline bool operator<(const T &op1, const U &op2)
 #endif
+    inline bool operator<(const T &op1, const U &op2)
 {
-    return dispatch_less_than(op1, op2);
+    return detail::dispatch_less_than(op1, op2);
 }
 
 /// Less-than or equal operator.
@@ -8632,12 +8661,12 @@ inline bool operator<(const T &op1, const U &op2)
  * @return \p true if <tt>op1 <= op2</tt>, \p false otherwise.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline bool operator<=(const IntegerOpTypes<T> &op1, const T &op2)
+template <typename T, typename U>
+requires IntegerOpTypes<T, U>
 #else
 template <typename T, typename U, integer_op_types_enabler<T, U> = 0>
-inline bool operator<=(const T &op1, const U &op2)
 #endif
+    inline bool operator<=(const T &op1, const U &op2)
 {
     return !(op1 > op2);
 }
@@ -8650,14 +8679,14 @@ inline bool operator<=(const T &op1, const U &op2)
  * @return \p true if <tt>op1 > op2</tt>, \p false otherwise.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline bool operator>(const IntegerOpTypes<T> &op1, const T &op2)
+template <typename T, typename U>
+requires IntegerOpTypes<T, U>
 #else
 template <typename T, typename U, integer_op_types_enabler<T, U> = 0>
-inline bool operator>(const T &op1, const U &op2)
 #endif
+    inline bool operator>(const T &op1, const U &op2)
 {
-    return dispatch_greater_than(op1, op2);
+    return detail::dispatch_greater_than(op1, op2);
 }
 
 /// Greater-than or equal operator.
@@ -8668,12 +8697,12 @@ inline bool operator>(const T &op1, const U &op2)
  * @return \p true if <tt>op1 >= op2</tt>, \p false otherwise.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline bool operator>=(const IntegerOpTypes<T> &op1, const T &op2)
+template <typename T, typename U>
+requires IntegerOpTypes<T, U>
 #else
 template <typename T, typename U, integer_op_types_enabler<T, U> = 0>
-inline bool operator>=(const T &op1, const U &op2)
 #endif
+    inline bool operator>=(const T &op1, const U &op2)
 {
     return !(op1 < op2);
 }
@@ -8697,7 +8726,7 @@ integer<SSize> operator~(const integer<SSize> &op)
     return retval;
 }
 
-inline namespace detail
+namespace detail
 {
 
 // Dispatch for binary OR.
@@ -8756,14 +8785,14 @@ inline void dispatch_in_place_or(T &rop, const integer<SSize> &op)
  * @return the bitwise OR of ``op1`` and ``op2``.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline auto operator|(const IntegerIntegralOpTypes<T> &op1, const T &op2)
+template <typename T, typename U>
+requires IntegerIntegralOpTypes<T, U> inline auto operator|(const T &op1, const U &op2)
 #else
 template <typename T, typename U, integer_integral_op_types_enabler<T, U> = 0>
-inline integer_common_t<T, U> operator|(const T &op1, const U &op2)
+inline detail::integer_common_t<T, U> operator|(const T &op1, const U &op2)
 #endif
 {
-    return dispatch_operator_or(op1, op2);
+    return detail::dispatch_operator_or(op1, op2);
 }
 
 /// In-place bitwise OR operator for \link mppp::integer integer\endlink.
@@ -8781,18 +8810,18 @@ inline integer_common_t<T, U> operator|(const T &op1, const U &op2)
  * @throws unspecified any exception thrown by the conversion operator of \link mppp::integer integer\endlink.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline auto &operator|=(IntegerIntegralOpTypes<T> &rop, const T &op)
+template <typename T, typename U>
+requires IntegerIntegralOpTypes<T, U>
 #else
 template <typename T, typename U, integer_integral_op_types_enabler<T, U> = 0>
-inline T &operator|=(T &rop, const U &op)
 #endif
+    inline T &operator|=(T &rop, const U &op)
 {
-    dispatch_in_place_or(rop, op);
+    detail::dispatch_in_place_or(rop, op);
     return rop;
 }
 
-inline namespace detail
+namespace detail
 {
 
 // Dispatch for binary AND.
@@ -8851,14 +8880,14 @@ inline void dispatch_in_place_and(T &rop, const integer<SSize> &op)
  * @return the bitwise AND of ``op1`` and ``op2``.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline auto operator&(const IntegerIntegralOpTypes<T> &op1, const T &op2)
+template <typename T, typename U>
+requires IntegerIntegralOpTypes<T, U> inline auto operator&(const T &op1, const U &op2)
 #else
 template <typename T, typename U, integer_integral_op_types_enabler<T, U> = 0>
-inline integer_common_t<T, U> operator&(const T &op1, const U &op2)
+inline detail::integer_common_t<T, U> operator&(const T &op1, const U &op2)
 #endif
 {
-    return dispatch_operator_and(op1, op2);
+    return detail::dispatch_operator_and(op1, op2);
 }
 
 /// In-place bitwise AND operator for \link mppp::integer integer\endlink.
@@ -8876,18 +8905,18 @@ inline integer_common_t<T, U> operator&(const T &op1, const U &op2)
  * @throws unspecified any exception thrown by the conversion operator of \link mppp::integer integer\endlink.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline auto &operator&=(IntegerIntegralOpTypes<T> &rop, const T &op)
+template <typename T, typename U>
+requires IntegerIntegralOpTypes<T, U>
 #else
 template <typename T, typename U, integer_integral_op_types_enabler<T, U> = 0>
-inline T &operator&=(T &rop, const U &op)
 #endif
+    inline T &operator&=(T &rop, const U &op)
 {
-    dispatch_in_place_and(rop, op);
+    detail::dispatch_in_place_and(rop, op);
     return rop;
 }
 
-inline namespace detail
+namespace detail
 {
 
 // Dispatch for binary XOR.
@@ -8946,14 +8975,14 @@ inline void dispatch_in_place_xor(T &rop, const integer<SSize> &op)
  * @return the bitwise XOR of ``op1`` and ``op2``.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline auto operator^(const IntegerIntegralOpTypes<T> &op1, const T &op2)
+template <typename T, typename U>
+requires IntegerIntegralOpTypes<T, U> inline auto operator^(const T &op1, const U &op2)
 #else
 template <typename T, typename U, integer_integral_op_types_enabler<T, U> = 0>
-inline integer_common_t<T, U> operator^(const T &op1, const U &op2)
+inline detail::integer_common_t<T, U> operator^(const T &op1, const U &op2)
 #endif
 {
-    return dispatch_operator_xor(op1, op2);
+    return detail::dispatch_operator_xor(op1, op2);
 }
 
 /// In-place bitwise XOR operator for \link mppp::integer integer\endlink.
@@ -8971,18 +9000,19 @@ inline integer_common_t<T, U> operator^(const T &op1, const U &op2)
  * @throws unspecified any exception thrown by the conversion operator of \link mppp::integer integer\endlink.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline auto &operator^=(IntegerIntegralOpTypes<T> &rop, const T &op)
+template <typename T, typename U>
+requires IntegerIntegralOpTypes<T, U>
 #else
 template <typename T, typename U, integer_integral_op_types_enabler<T, U> = 0>
-inline T &operator^=(T &rop, const U &op)
 #endif
+    inline T &operator^=(T &rop, const U &op)
 {
-    dispatch_in_place_xor(rop, op);
+    detail::dispatch_in_place_xor(rop, op);
     return rop;
 }
 
 /** @} */
+
 } // namespace mppp
 
 namespace std

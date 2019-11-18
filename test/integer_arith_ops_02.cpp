@@ -1,4 +1,4 @@
-// Copyright 2016-2018 Francesco Biscani (bluescarni@gmail.com)
+// Copyright 2016-2019 Francesco Biscani (bluescarni@gmail.com)
 //
 // This file is part of the mp++ library.
 //
@@ -15,7 +15,6 @@
 #endif
 
 #include <cstddef>
-#include <gmp.h>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -23,14 +22,14 @@
 #include <type_traits>
 #include <utility>
 
+#include <gmp.h>
+
 #include <mp++/config.hpp>
 #include <mp++/detail/type_traits.hpp>
 #include <mp++/integer.hpp>
 
-#include "test_utils.hpp"
-
-#define CATCH_CONFIG_MAIN
 #include "catch.hpp"
+#include "test_utils.hpp"
 
 using namespace mppp;
 using namespace mppp_test;
@@ -46,10 +45,10 @@ template <typename T, typename U>
 using inplace_divvv_t = decltype(std::declval<T &>() /= std::declval<const U &>());
 
 template <typename T, typename U>
-using is_divisible = is_detected<divvv_t, T, U>;
+using is_divisible = detail::is_detected<divvv_t, T, U>;
 
 template <typename T, typename U>
-using is_divisible_inplace = is_detected<inplace_divvv_t, T, U>;
+using is_divisible_inplace = detail::is_detected<inplace_divvv_t, T, U>;
 
 struct div_tester {
     template <typename S>

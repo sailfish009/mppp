@@ -1,4 +1,4 @@
-// Copyright 2016-2018 Francesco Biscani (bluescarni@gmail.com)
+// Copyright 2016-2019 Francesco Biscani (bluescarni@gmail.com)
 //
 // This file is part of the mp++ library.
 //
@@ -7,17 +7,16 @@
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 #include <cstddef>
-#include <gmp.h>
 #include <random>
 #include <tuple>
 #include <type_traits>
 
+#include <gmp.h>
+
 #include <mp++/integer.hpp>
 
-#include "test_utils.hpp"
-
-#define CATCH_CONFIG_MAIN
 #include "catch.hpp"
+#include "test_utils.hpp"
 
 static int ntries = 1000;
 
@@ -35,7 +34,7 @@ struct tdiv_q_tester {
     inline void operator()(const S &) const
     {
         using integer = integer<S::value>;
-        mpz_raii m1, m3, m4;
+        detail::mpz_raii m1, m3, m4;
         integer n1, n3, n4;
         // A few simple tests to start.
         n3 = integer(12);
@@ -62,7 +61,7 @@ struct tdiv_q_tester {
         ::mpz_tdiv_q(&m1.m_mpz, &m3.m_mpz, &m4.m_mpz);
         REQUIRE((lex_cast(n1) == lex_cast(m1)));
         // Random testing.
-        mpz_raii tmp;
+        detail::mpz_raii tmp;
         std::uniform_int_distribution<int> sdist(0, 1);
         auto random_xy = [&](unsigned x, unsigned y) {
             for (int i = 0; i < ntries; ++i) {

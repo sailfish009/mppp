@@ -1,4 +1,4 @@
-// Copyright 2016-2018 Francesco Biscani (bluescarni@gmail.com)
+// Copyright 2016-2019 Francesco Biscani (bluescarni@gmail.com)
 //
 // This file is part of the mp++ library.
 //
@@ -6,32 +6,28 @@
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-#include <mp++/config.hpp>
-
 #include <atomic>
 #include <cmath>
 #include <cstddef>
-#include <gmp.h>
 #include <iostream>
 #include <limits>
-#include <mp++/detail/type_traits.hpp>
-#include <mp++/integer.hpp>
 #include <random>
 #include <sstream>
 #include <stdexcept>
 #include <string>
-#if MPPP_CPLUSPLUS >= 201703L
-#include <string_view>
-#endif
 #include <thread>
 #include <tuple>
 #include <type_traits>
 #include <utility>
 
-#include "test_utils.hpp"
+#include <gmp.h>
 
-#define CATCH_CONFIG_MAIN
+#include <mp++/config.hpp>
+#include <mp++/detail/type_traits.hpp>
+#include <mp++/integer.hpp>
+
 #include "catch.hpp"
+#include "test_utils.hpp"
 
 static int ntries = 1000;
 
@@ -62,8 +58,6 @@ using sizes = std::tuple<std::integral_constant<std::size_t, 1>, std::integral_c
 // is launched it will be inited with a different seed.
 static std::mt19937::result_type mt_rng_seed(0u);
 
-static std::mt19937 rng;
-
 struct no_const {
 };
 
@@ -78,7 +72,7 @@ struct int_ctor_tester {
             REQUIRE(lex_cast(Int(0)) == lex_cast(integer{Int(0)}));
             REQUIRE(lex_cast(Int(42)) == lex_cast(integer{Int(42)}));
             REQUIRE(lex_cast(Int(-42)) == lex_cast(integer{Int(-42)}));
-            auto constexpr min = nl_min<Int>(), max = nl_max<Int>();
+            auto constexpr min = detail::nl_min<Int>(), max = detail::nl_max<Int>();
             REQUIRE(lex_cast(min) == lex_cast(integer{min}));
             REQUIRE(lex_cast(max) == lex_cast(integer{max}));
             std::atomic<bool> fail(false);
@@ -134,7 +128,7 @@ struct int_ass_tester {
             n0 = Int(0);
             REQUIRE(n0 == 0);
             REQUIRE(n0.is_static());
-            auto constexpr min = nl_min<Int>(), max = nl_max<Int>();
+            auto constexpr min = detail::nl_min<Int>(), max = detail::nl_max<Int>();
             n0 = min;
             REQUIRE(n0 == min);
             n0 = max;
@@ -150,7 +144,7 @@ struct int_ass_tester {
                 std::mt19937 eng(static_cast<std::mt19937::result_type>(n + mt_rng_seed));
                 for (auto i = 0; i < ntries; ++i) {
                     integer n1;
-                    if (sdist(rng)) {
+                    if (sdist(eng)) {
                         n1.promote();
                     }
                     auto tmp = static_cast<Int>(dist(eng));

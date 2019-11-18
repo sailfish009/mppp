@@ -1,4 +1,4 @@
-// Copyright 2016-2018 Francesco Biscani (bluescarni@gmail.com)
+// Copyright 2016-2019 Francesco Biscani (bluescarni@gmail.com)
 //
 // This file is part of the mp++ library.
 //
@@ -7,19 +7,18 @@
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 #include <cstddef>
-#include <gmp.h>
 #include <random>
 #include <stdexcept>
 #include <string>
 #include <tuple>
 #include <type_traits>
 
+#include <gmp.h>
+
 #include <mp++/integer.hpp>
 
-#include "test_utils.hpp"
-
-#define CATCH_CONFIG_MAIN
 #include "catch.hpp"
+#include "test_utils.hpp"
 
 static int ntries = 1000;
 
@@ -38,7 +37,7 @@ struct fac_tester {
     {
         using integer = integer<S::value>;
         // Start with all zeroes.
-        mpz_raii m1;
+        detail::mpz_raii m1;
         integer n1;
         ::mpz_fac_ui(&m1.m_mpz, 0);
         fac_ui(n1, 0);
@@ -74,7 +73,7 @@ struct fac_tester {
                    == "The value 1000001 is too large to be used as input for the factorial "
                       "function (the maximum allowed value is 1000000)";
         });
-        mpz_raii tmp;
+        detail::mpz_raii tmp;
         std::uniform_int_distribution<int> sdist(0, 1);
         std::uniform_int_distribution<unsigned long> udist(0u, 100u);
         for (int i = 0; i < ntries; ++i) {

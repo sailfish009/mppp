@@ -1,4 +1,4 @@
-// Copyright 2016-2018 Francesco Biscani (bluescarni@gmail.com)
+// Copyright 2016-2019 Francesco Biscani (bluescarni@gmail.com)
 //
 // This file is part of the mp++ library.
 //
@@ -20,22 +20,24 @@
 
 #include <ciso646>
 #include <cstdint>
-#include <gmp.h>
 #include <limits>
-#include <quadmath.h>
 #include <random>
 #include <stdexcept>
 #include <string>
-#if MPPP_CPLUSPLUS >= 201703L
-#include <string_view>
-#endif
 #include <type_traits>
 #include <utility>
 #include <vector>
 
+#if defined(MPPP_HAVE_STRING_VIEW)
+#include <string_view>
+#endif
+
+#include <gmp.h>
+
+#include <quadmath.h>
+
 #include "test_utils.hpp"
 
-#define CATCH_CONFIG_MAIN
 #include "catch.hpp"
 
 using namespace mppp;
@@ -47,8 +49,8 @@ static int ntries = 1000;
 
 static std::mt19937 rng;
 
-static constexpr auto delta64 = nl_digits<std::uint_least64_t>() - 64;
-static constexpr auto delta49 = nl_digits<std::uint_least64_t>() - 49;
+static constexpr auto delta64 = detail::nl_digits<std::uint_least64_t>() - 64;
+static constexpr auto delta49 = detail::nl_digits<std::uint_least64_t>() - 49;
 
 TEST_CASE("real128 constructors")
 {
@@ -205,7 +207,7 @@ TEST_CASE("real128 constructors")
             return std::string(ex.what())
                    == "The string '-1234 ' does not represent a valid quadruple-precision floating-point value";
         });
-#if MPPP_CPLUSPLUS >= 201703L
+#if defined(MPPP_HAVE_STRING_VIEW)
     REQUIRE((real128{std::string_view{tmp_char + 6, 5}}.m_value == -1234));
     REQUIRE_THROWS_PREDICATE(
         (real128{std::string_view{tmp_char + 6, 6}}), std::invalid_argument, [](const std::invalid_argument &ex) {
@@ -251,7 +253,7 @@ TEST_CASE("real128 constructors")
     REQUIRE((ra.m_value == -123000));
     ra = std::string("1234");
     REQUIRE((ra.m_value == 1234));
-#if MPPP_CPLUSPLUS >= 201703L
+#if defined(MPPP_HAVE_STRING_VIEW)
     ra = std::string_view{tmp_char + 6, 5};
     REQUIRE((ra.m_value == -1234));
 #endif
@@ -509,3 +511,12 @@ TEST_CASE("real128 numeric_limits")
     static_assert(!std::numeric_limits<real128>::tinyness_before, "");
     static_assert(std::numeric_limits<real128>::round_style == std::round_to_nearest, "");
 }
+
+#if MPPP_CPLUSPLUS >= 201703L
+
+TEST_CASE("real128 nts")
+{
+    REQUIRE(std::is_nothrow_swappable_v<real128>);
+}
+
+#endif

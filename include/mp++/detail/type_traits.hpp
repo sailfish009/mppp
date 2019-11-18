@@ -1,4 +1,4 @@
-// Copyright 2016-2018 Francesco Biscani (bluescarni@gmail.com)
+// Copyright 2016-2019 Francesco Biscani (bluescarni@gmail.com)
 //
 // This file is part of the mp++ library.
 //
@@ -17,7 +17,7 @@
 namespace mppp
 {
 
-inline namespace detail
+namespace detail
 {
 
 // A bunch of useful utilities from C++14/C++17.
@@ -108,15 +108,6 @@ struct negation : std::integral_constant<bool, !B::value> {
 #endif
 
 // Small helpers, like C++14.
-#if MPPP_CPLUSPLUS >= 201402L
-
-using std::enable_if_t;
-using std::remove_cv_t;
-using std::remove_extent_t;
-using std::remove_pointer_t;
-
-#else
-
 template <bool B, typename T = void>
 using enable_if_t = typename std::enable_if<B, T>::type;
 
@@ -128,8 +119,6 @@ using remove_extent_t = typename std::remove_extent<T>::type;
 
 template <typename T>
 using remove_pointer_t = typename std::remove_pointer<T>::type;
-
-#endif
 
 // Some handy aliases.
 template <typename T>
@@ -262,7 +251,7 @@ constexpr __uint128_t nl_min<__uint128_t>()
 template <>
 constexpr __int128_t nl_max<__int128_t>()
 {
-    return (((__int128_t(1) << 126) - 1) << 1) + 1;
+    return static_cast<__int128_t>((__uint128_t(1) << 127u) - 1u);
 }
 
 template <>
@@ -279,7 +268,7 @@ template <typename T>
 struct nl_constants {
     static constexpr int digits = nl_digits<T>();
 };
-}
-}
+} // namespace detail
+} // namespace mppp
 
 #endif

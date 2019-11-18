@@ -1,4 +1,4 @@
-// Copyright 2016-2018 Francesco Biscani (bluescarni@gmail.com)
+// Copyright 2016-2019 Francesco Biscani (bluescarni@gmail.com)
 //
 // This file is part of the mp++ library.
 //
@@ -7,33 +7,34 @@
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 #include <mp++/config.hpp>
-#include <mp++/detail/type_traits.hpp>
-#include <mp++/integer.hpp>
-#include <mp++/rational.hpp>
 
 #include <atomic>
 #include <cmath>
 #include <cstddef>
-#include <gmp.h>
 #include <iostream>
 #include <limits>
 #include <random>
 #include <sstream>
 #include <stdexcept>
 #include <string>
-#if MPPP_CPLUSPLUS >= 201703L
-#include <string_view>
-#endif
 #include <thread>
 #include <tuple>
 #include <type_traits>
 #include <utility>
 #include <vector>
 
-#include "test_utils.hpp"
+#if defined(MPPP_HAVE_STRING_VIEW)
+#include <string_view>
+#endif
 
-#define CATCH_CONFIG_MAIN
+#include <gmp.h>
+
+#include <mp++/detail/type_traits.hpp>
+#include <mp++/integer.hpp>
+#include <mp++/rational.hpp>
+
 #include "catch.hpp"
+#include "test_utils.hpp"
 
 static int ntries = 1000;
 
@@ -71,7 +72,7 @@ struct int_ctor_tester {
             REQUIRE((std::is_constructible<rational, Int &&>::value));
             REQUIRE((std::is_constructible<rational, const Int &>::value));
             REQUIRE(lex_cast(Int(0)) == lex_cast(rational{Int(0)}));
-            auto constexpr min = nl_min<Int>(), max = nl_max<Int>();
+            auto constexpr min = detail::nl_min<Int>(), max = detail::nl_max<Int>();
             REQUIRE(lex_cast(min) == lex_cast(rational{min}));
             REQUIRE(lex_cast(max) == lex_cast(rational{max}));
             std::atomic<bool> fail(false);
@@ -271,13 +272,13 @@ struct string_ctor_tester {
     void operator()(const S &) const
     {
         using rational = rational<S::value>;
-        REQUIRE(is_rational<rational>::value);
-        REQUIRE(!is_rational<int>::value);
-        REQUIRE((is_same_ssize_rational<rational, rational>::value));
-        REQUIRE((!is_same_ssize_rational<rational, mppp::rational<S::value + 1u>>::value));
-        REQUIRE((!is_same_ssize_rational<mppp::rational<S::value + 1u>, rational>::value));
-        REQUIRE((!is_same_ssize_rational<void, int>::value));
-        REQUIRE((!is_same_ssize_rational<rational, std::string>::value));
+        REQUIRE(detail::is_rational<rational>::value);
+        REQUIRE(!detail::is_rational<int>::value);
+        REQUIRE((detail::is_same_ssize_rational<rational, rational>::value));
+        REQUIRE((!detail::is_same_ssize_rational<rational, mppp::rational<S::value + 1u>>::value));
+        REQUIRE((!detail::is_same_ssize_rational<mppp::rational<S::value + 1u>, rational>::value));
+        REQUIRE((!detail::is_same_ssize_rational<void, int>::value));
+        REQUIRE((!detail::is_same_ssize_rational<rational, std::string>::value));
         REQUIRE((std::is_constructible<rational, const char *>::value));
         REQUIRE((std::is_constructible<rational, std::string>::value));
         REQUIRE((std::is_constructible<rational, std::string &&>::value));
@@ -349,7 +350,7 @@ struct string_ctor_tester {
         const char *cs = "-1234/345\0";
         REQUIRE((rational{cs, cs + 9} == rational{-1234, 345}));
         REQUIRE((rational{cs, cs + 8} == rational{-617, 17}));
-#if MPPP_CPLUSPLUS >= 201703L
+#if defined(MPPP_HAVE_STRING_VIEW)
         std::string_view sv = "-1234/345";
         REQUIRE((rational{sv} == rational{-1234, 345}));
         REQUIRE((rational{std::string_view{sv.data(), 8u}} == rational{-617, 17}));
@@ -375,7 +376,7 @@ struct mpq_copy_ctor_tester {
     void operator()(const S &) const
     {
         using rational = rational<S::value>;
-        mpq_raii m;
+        detail::mpq_raii m;
         REQUIRE((std::is_constructible<rational, const ::mpq_t>::value));
         REQUIRE(lex_cast(rational{&m.m_mpq}) == "0");
         ::mpz_set_si(mpq_numref(&m.m_mpq), 1234);
@@ -452,7 +453,7 @@ struct mpz_ctor_tester {
     {
         using rational = rational<S::value>;
         using integer = integer<S::value>;
-        mpz_raii m;
+        detail::mpz_raii m;
         REQUIRE((std::is_constructible<rational, const ::mpz_t>::value));
         REQUIRE(rational{&m.m_mpz}.is_zero());
         REQUIRE(rational{&m.m_mpz}.get_num().is_static());
@@ -732,6 +733,21 @@ struct copy_move_tester {
         REQUIRE(q.get_den().is_one());
         REQUIRE(q.get_num().is_static());
         REQUIRE(q.get_den().is_static());
+
+        // Do some minimal testing for swapping as well.
+        q = 0;
+        q2 = 1;
+        swap(q2, q2);
+        REQUIRE(q2 == 1);
+        swap(q, q2);
+        REQUIRE(q == 1);
+        REQUIRE(q2 == 0);
+        q = "4/5";
+        q2 = "-3/7";
+        swap(q, q2);
+        REQUIRE(q == rational{-3, 7});
+        REQUIRE(q2 == rational{4, 5});
+        REQUIRE(noexcept(swap(q, q2)));
     }
 };
 
@@ -765,7 +781,7 @@ struct string_ass_tester {
             return std::string(ia.what())
                    == "A zero denominator was detected in the constructor of a rational from string";
         });
-#if MPPP_CPLUSPLUS >= 201703L
+#if defined(MPPP_HAVE_STRING_VIEW)
         q = std::string_view{"1"};
         REQUIRE(q == 1);
         q = std::string_view{"-23"};
@@ -798,7 +814,7 @@ struct mpq_copy_ass_tester {
         REQUIRE((std::is_assignable<rational &, ::mpq_t>::value));
         REQUIRE((!std::is_assignable<const rational &, ::mpq_t>::value));
         rational q;
-        mpq_raii m;
+        detail::mpq_raii m;
         q = &m.m_mpq;
         REQUIRE(lex_cast(q) == "0");
         ::mpq_set_si(&m.m_mpq, 1234, 1);
@@ -870,7 +886,7 @@ struct mpz_ass_tester {
         REQUIRE((std::is_assignable<rational &, ::mpz_t>::value));
         REQUIRE((!std::is_assignable<const rational &, ::mpz_t>::value));
         rational q{6, 5};
-        mpz_raii m;
+        detail::mpz_raii m;
         ::mpz_set_si(&m.m_mpz, 1234);
         q = &m.m_mpz;
         REQUIRE(q.get_num() == 1234);
@@ -998,7 +1014,7 @@ struct int_convert_tester {
             using integer = typename rational::int_t;
             REQUIRE((is_convertible<rational, Int>::value));
             REQUIRE(roundtrip_conversion<rational>(0));
-            auto constexpr min = nl_min<Int>(), max = nl_max<Int>();
+            auto constexpr min = detail::nl_min<Int>(), max = detail::nl_max<Int>();
             REQUIRE(roundtrip_conversion<rational>(min));
             REQUIRE(roundtrip_conversion<rational>(max));
             REQUIRE(roundtrip_conversion<rational>(min + Int(1)));
@@ -1291,41 +1307,6 @@ struct stream_tester {
             oss << rational{12, 6};
             REQUIRE(oss.str() == "2");
         }
-        {
-            std::stringstream ss;
-            ss << rational{};
-            rational q(12);
-            ss >> q;
-            REQUIRE(lex_cast(q) == "0");
-        }
-        {
-            std::stringstream ss;
-            ss << rational{-123};
-            rational q;
-            ss >> q;
-            REQUIRE(lex_cast(q) == "-123");
-        }
-        {
-            std::stringstream ss;
-            ss << rational{-12, 6};
-            rational q;
-            ss >> q;
-            REQUIRE(lex_cast(q) == "-2");
-        }
-        {
-            std::stringstream ss;
-            ss << rational{6, 12};
-            rational q;
-            ss >> q;
-            REQUIRE(lex_cast(q) == "1/2");
-        }
-        {
-            std::stringstream ss;
-            ss.str("-42");
-            rational q;
-            ss >> q;
-            REQUIRE(lex_cast(q) == "-42");
-        }
     }
 };
 
@@ -1333,3 +1314,16 @@ TEST_CASE("stream")
 {
     tuple_for_each(sizes{}, stream_tester{});
 }
+
+#if MPPP_CPLUSPLUS >= 201703L
+
+TEST_CASE("rational nts")
+{
+    REQUIRE(std::is_nothrow_swappable_v<rational<1>>);
+    REQUIRE(std::is_nothrow_swappable_v<rational<2>>);
+    REQUIRE(std::is_nothrow_swappable_v<rational<6>>);
+    REQUIRE(std::is_nothrow_swappable_v<rational<10>>);
+    REQUIRE(std::is_nothrow_swappable_v<rational<15>>);
+}
+
+#endif

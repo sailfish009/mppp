@@ -67,6 +67,22 @@ Much of the functionality of the :cpp:class:`~mppp::rational` class is exposed v
 mimic the `GMP API <https://gmplib.org/manual/Rational-Number-Functions.html>`__ where appropriate, but a variety of
 convenience/generic overloads is provided as well.
 
+.. _rational_assignment:
+
+Assignment
+~~~~~~~~~~
+
+.. cpp:function:: template <std::size_t SSize> void mppp::swap(mppp::rational<SSize> &q1, mppp::rational<SSize> &q2) noexcept
+
+   .. versionadded:: 0.15
+
+   Swap.
+
+   This function will efficiently swap the values of *q1* and *q2*.
+
+   :param q1: the first argument.
+   :param q2: the second argument.
+
 .. _rational_conversion:
 
 Conversion
@@ -114,8 +130,19 @@ Exponentiation
 Input/Output
 ~~~~~~~~~~~~
 
-.. doxygengroup:: rational_io
-   :content-only:
+.. cpp:function:: template <std::size_t SSize> std::ostream &mppp::operator<<(std::ostream &os, const mppp::rational<SSize> &q)
+
+   Stream insertion operator.
+
+   This function will direct to the output stream *os* the input :cpp:class:`~mppp::rational` *q*.
+
+   :param os: the output stream.
+   :param q: the input :cpp:class:`~mppp::rational`.
+
+   :return: a reference to *os*.
+
+   :exception std\:\:overflow_error: in case of (unlikely) overflow errors.
+   :exception unspecified: any exception raised by the public interface of ``std::ostream`` or by memory allocation errors.
 
 .. _rational_other:
 

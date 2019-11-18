@@ -1,4 +1,4 @@
-// Copyright 2016-2018 Francesco Biscani (bluescarni@gmail.com)
+// Copyright 2016-2019 Francesco Biscani (bluescarni@gmail.com)
 //
 // This file is part of the mp++ library.
 //
@@ -13,29 +13,30 @@
 #include <atomic>
 #include <cmath>
 #include <cstddef>
-#include <gmp.h>
 #include <ios>
 #include <iostream>
 #include <limits>
-#include <mp++/detail/type_traits.hpp>
-#include <mp++/integer.hpp>
 #include <random>
 #include <sstream>
 #include <stdexcept>
 #include <string>
-#if MPPP_CPLUSPLUS >= 201703L
-#include <string_view>
-#endif
 #include <thread>
 #include <tuple>
 #include <type_traits>
 #include <utility>
 #include <vector>
 
-#include "test_utils.hpp"
+#if defined(MPPP_HAVE_STRING_VIEW)
+#include <string_view>
+#endif
 
-#define CATCH_CONFIG_MAIN
+#include <gmp.h>
+
+#include <mp++/detail/type_traits.hpp>
+#include <mp++/integer.hpp>
+
 #include "catch.hpp"
+#include "test_utils.hpp"
 
 static int ntries = 1000;
 
@@ -121,7 +122,7 @@ struct fp_ass_tester {
                 std::mt19937 eng(static_cast<std::mt19937::result_type>(n + mt_rng_seed));
                 for (auto i = 0; i < ntries; ++i) {
                     integer n1;
-                    if (sdist(rng)) {
+                    if (sdist(eng)) {
                         n1.promote();
                     }
                     auto tmp = dist(eng);
@@ -227,7 +228,7 @@ struct string_ctor_tester {
         const char *cs = "-1234\0";
         REQUIRE((integer{cs, cs + 5} == -1234));
         REQUIRE((integer{cs, cs + 4} == -123));
-#if MPPP_CPLUSPLUS >= 201703L
+#if defined(MPPP_HAVE_STRING_VIEW)
         std::string_view sv = "-1234";
         REQUIRE((integer{sv} == -1234));
         REQUIRE((integer{std::string_view{sv.data(), 4u}} == -123));
@@ -253,7 +254,7 @@ struct mpz_copy_ctor_tester {
     void operator()(const S &) const
     {
         using integer = integer<S::value>;
-        mpz_raii m;
+        detail::mpz_raii m;
         REQUIRE(lex_cast(integer{&m.m_mpz}) == "0");
         ::mpz_set_si(&m.m_mpz, 1234);
         REQUIRE(lex_cast(integer{&m.m_mpz}) == "1234");
@@ -268,10 +269,10 @@ struct mpz_copy_ctor_tester {
         // Random testing.
         std::atomic<bool> fail(false);
         auto f = [&fail](unsigned n) {
-            std::uniform_int_distribution<long> dist(nl_min<long>(), nl_max<long>());
+            std::uniform_int_distribution<long> dist(detail::nl_min<long>(), detail::nl_max<long>());
             std::mt19937 eng(static_cast<std::mt19937::result_type>(n + mt_rng_seed));
             for (auto i = 0; i < ntries; ++i) {
-                mpz_raii mpz;
+                detail::mpz_raii mpz;
                 auto tmp = dist(eng);
                 ::mpz_set_si(&mpz.m_mpz, tmp);
                 if (lex_cast(integer{&mpz.m_mpz}) != lex_cast(tmp)) {
@@ -321,7 +322,7 @@ struct mpz_move_ctor_tester {
         // Random testing.
         std::atomic<bool> fail(false);
         auto f = [&fail](unsigned n) {
-            std::uniform_int_distribution<long> dist(nl_min<long>(), nl_max<long>());
+            std::uniform_int_distribution<long> dist(detail::nl_min<long>(), detail::nl_max<long>());
             std::mt19937 eng(static_cast<std::mt19937::result_type>(n + mt_rng_seed));
             for (auto i = 0; i < ntries; ++i) {
                 ::mpz_t m1;
@@ -411,21 +412,21 @@ struct binary_s11n_tester {
         // MSVC (apart from clang-cl) has troubles with the detection idiom,
         // let's hope they fix SFINAE eventually.
 #if !defined(_MSC_VER) || (defined(_MSC_VER) && defined(__clang__))
-        REQUIRE(!is_detected<binary_save_t, integer, std::vector<char>>::value);
-        REQUIRE(!is_detected<binary_save_t, integer, std::vector<char> &&>::value);
-        REQUIRE(is_detected<binary_save_t, integer, std::vector<char> &>::value);
-        REQUIRE(!is_detected<binary_save_t, integer, const std::vector<char>>::value);
-        REQUIRE(!is_detected<binary_save_t, integer, const std::vector<char> &>::value);
-        REQUIRE(is_detected<binary_save_t, integer, char *>::value);
-        REQUIRE(is_detected<binary_save_t, integer, char *&&>::value);
-        REQUIRE(is_detected<binary_save_t, integer, char *&>::value);
-        REQUIRE(is_detected<binary_save_t, integer, char *const &>::value);
-        REQUIRE(!is_detected<binary_save_t, integer, const char *>::value);
-        REQUIRE(is_detected<binary_load_t, integer, std::vector<char>>::value);
-        REQUIRE(is_detected<binary_load_t, integer, std::vector<char> &&>::value);
-        REQUIRE(is_detected<binary_load_t, integer, const std::vector<char>>::value);
-        REQUIRE(is_detected<binary_load_t, integer, const std::vector<char> &>::value);
-        REQUIRE(!is_detected<binary_load_t, const integer, std::vector<char>>::value);
+        REQUIRE(!detail::is_detected<binary_save_t, integer, std::vector<char>>::value);
+        REQUIRE(!detail::is_detected<binary_save_t, integer, std::vector<char> &&>::value);
+        REQUIRE(detail::is_detected<binary_save_t, integer, std::vector<char> &>::value);
+        REQUIRE(!detail::is_detected<binary_save_t, integer, const std::vector<char>>::value);
+        REQUIRE(!detail::is_detected<binary_save_t, integer, const std::vector<char> &>::value);
+        REQUIRE(detail::is_detected<binary_save_t, integer, char *>::value);
+        REQUIRE(detail::is_detected<binary_save_t, integer, char *&&>::value);
+        REQUIRE(detail::is_detected<binary_save_t, integer, char *&>::value);
+        REQUIRE(detail::is_detected<binary_save_t, integer, char *const &>::value);
+        REQUIRE(!detail::is_detected<binary_save_t, integer, const char *>::value);
+        REQUIRE(detail::is_detected<binary_load_t, integer, std::vector<char>>::value);
+        REQUIRE(detail::is_detected<binary_load_t, integer, std::vector<char> &&>::value);
+        REQUIRE(detail::is_detected<binary_load_t, integer, const std::vector<char>>::value);
+        REQUIRE(detail::is_detected<binary_load_t, integer, const std::vector<char> &>::value);
+        REQUIRE(!detail::is_detected<binary_load_t, const integer, std::vector<char>>::value);
 #endif
         std::vector<char> buffer;
         std::stringstream ss;
@@ -435,13 +436,14 @@ struct binary_s11n_tester {
         };
         // A few tests with zero value.
         integer n1, n2, n3, n4, n5;
-        REQUIRE(n1.binary_size() == sizeof(mpz_size_t));
+        REQUIRE(n1.binary_size() == sizeof(detail::mpz_size_t));
         buffer.resize(n1.binary_size());
         REQUIRE(n1.binary_save(buffer.data()) == n1.binary_size());
         REQUIRE(n1.binary_save(ss) == n1.binary_size());
         REQUIRE(ss.good());
-        mpz_size_t size = -1;
-        std::copy(buffer.data(), buffer.data() + sizeof(mpz_size_t), make_uai(reinterpret_cast<char *>(&size)));
+        detail::mpz_size_t size = -1;
+        std::copy(buffer.data(), buffer.data() + sizeof(detail::mpz_size_t),
+                  detail::make_uai(reinterpret_cast<char *>(&size)));
         REQUIRE(size == 0);
         REQUIRE(n2.binary_load(buffer.data()) == n1.binary_size());
         REQUIRE(n2 == 0);
@@ -457,7 +459,8 @@ struct binary_s11n_tester {
         REQUIRE(n1.binary_save(ss) == n1.binary_size());
         REQUIRE(ss.good());
         size = -1;
-        std::copy(buffer.data(), buffer.data() + sizeof(mpz_size_t), make_uai(reinterpret_cast<char *>(&size)));
+        std::copy(buffer.data(), buffer.data() + sizeof(detail::mpz_size_t),
+                  detail::make_uai(reinterpret_cast<char *>(&size)));
         REQUIRE(size == 0);
         n2.promote();
         REQUIRE(n2.binary_load(buffer.data()) == n1.binary_size());
@@ -470,12 +473,12 @@ struct binary_s11n_tester {
         REQUIRE(n5 == 0);
         REQUIRE(n5.is_static());
         clear_ss();
-        mpz_raii tmp;
+        detail::mpz_raii tmp;
         std::uniform_int_distribution<int> sdist(0, 1);
         // Buffers based on std::vector and std::array.
         std::vector<char> vbuffer;
         // Make space for plenty of limbs.
-        std::array<char, sizeof(mpz_size_t) + sizeof(::mp_limb_t) * 100u> sb;
+        std::array<char, sizeof(detail::mpz_size_t) + sizeof(::mp_limb_t) * 100u> sb;
         // Run a variety of tests with operands with x and y number of limbs.
         auto random_xy = [&](unsigned x, unsigned y) {
             for (int i = 0; i < ntries; ++i) {
@@ -575,9 +578,9 @@ struct binary_s11n_tester {
         buffer.resize(sizeof(size) + sizeof(::mp_limb_t) * unsigned(size));
         ::mp_limb_t l = 0;
         std::copy(reinterpret_cast<char *>(&size), reinterpret_cast<char *>(&size) + sizeof(size),
-                  make_uai(buffer.data()));
+                  detail::make_uai(buffer.data()));
         std::copy(reinterpret_cast<char *>(&l), reinterpret_cast<char *>(&l) + sizeof(l),
-                  make_uai(buffer.data() + sizeof(size)));
+                  detail::make_uai(buffer.data() + sizeof(size)));
         REQUIRE_THROWS_PREDICATE(
             n1.binary_load(buffer.data()), std::invalid_argument, [](const std::invalid_argument &ex) {
                 return std::string(ex.what())
@@ -588,14 +591,14 @@ struct binary_s11n_tester {
 
         // Load into a static int a dynamic value with topmost limb 0.
         n1 = integer{-1};
-        size = static_cast<mpz_size_t>(S::value + 1u);
+        size = static_cast<detail::mpz_size_t>(S::value + 1u);
         buffer.resize(sizeof(size) + sizeof(::mp_limb_t) * unsigned(size));
         std::array<::mp_limb_t, S::value + 1u> sbuffer{};
         std::copy(reinterpret_cast<char *>(&size), reinterpret_cast<char *>(&size) + sizeof(size),
-                  make_uai(buffer.data()));
+                  detail::make_uai(buffer.data()));
         std::copy(reinterpret_cast<char *>(sbuffer.data()),
                   reinterpret_cast<char *>(sbuffer.data()) + sizeof(::mp_limb_t) * unsigned(size),
-                  make_uai(buffer.data() + sizeof(size)));
+                  detail::make_uai(buffer.data() + sizeof(size)));
         REQUIRE_THROWS_PREDICATE(
             n1.binary_load(buffer.data()), std::invalid_argument, [](const std::invalid_argument &ex) {
                 return std::string(ex.what())
@@ -611,9 +614,9 @@ struct binary_s11n_tester {
         buffer.resize(sizeof(size) + sizeof(::mp_limb_t) * unsigned(size));
         l = 0;
         std::copy(reinterpret_cast<char *>(&size), reinterpret_cast<char *>(&size) + sizeof(size),
-                  make_uai(buffer.data()));
+                  detail::make_uai(buffer.data()));
         std::copy(reinterpret_cast<char *>(&l), reinterpret_cast<char *>(&l) + sizeof(l),
-                  make_uai(buffer.data() + sizeof(size)));
+                  detail::make_uai(buffer.data() + sizeof(size)));
         REQUIRE_THROWS_PREDICATE(
             n1.binary_load(buffer.data()), std::invalid_argument, [](const std::invalid_argument &ex) {
                 return std::string(ex.what())
@@ -625,14 +628,14 @@ struct binary_s11n_tester {
         // Load into a dynamic int a dynamic value with topmost limb 0.
         n1 = integer{-1};
         n1.promote();
-        size = static_cast<mpz_size_t>(S::value + 1u);
+        size = static_cast<detail::mpz_size_t>(S::value + 1u);
         buffer.resize(sizeof(size) + sizeof(::mp_limb_t) * unsigned(size));
         sbuffer = std::array<::mp_limb_t, S::value + 1u>{};
         std::copy(reinterpret_cast<char *>(&size), reinterpret_cast<char *>(&size) + sizeof(size),
-                  make_uai(buffer.data()));
+                  detail::make_uai(buffer.data()));
         std::copy(reinterpret_cast<char *>(sbuffer.data()),
                   reinterpret_cast<char *>(sbuffer.data()) + sizeof(::mp_limb_t) * unsigned(size),
-                  make_uai(buffer.data() + sizeof(size)));
+                  detail::make_uai(buffer.data() + sizeof(size)));
         REQUIRE_THROWS_PREDICATE(
             n1.binary_load(buffer.data()), std::invalid_argument, [](const std::invalid_argument &ex) {
                 return std::string(ex.what())
@@ -649,18 +652,19 @@ struct binary_s11n_tester {
             return std::string(ex.what())
                    == "Invalid vector size in the deserialisation of an integer via a std::array: the std::array "
                       "size must be at least "
-                          + std::to_string(sizeof(mpz_size_t)) + " bytes, but it is only 0 bytes";
+                          + std::to_string(sizeof(detail::mpz_size_t)) + " bytes, but it is only 0 bytes";
         });
         REQUIRE_THROWS_PREDICATE(binary_load(n1, zero_vec), std::invalid_argument, [](const std::invalid_argument &ex) {
             return std::string(ex.what())
                    == "Invalid vector size in the deserialisation of an integer via a std::vector: the std::vector "
                       "size must be at least "
-                          + std::to_string(sizeof(mpz_size_t)) + " bytes, but it is only 0 bytes";
+                          + std::to_string(sizeof(detail::mpz_size_t)) + " bytes, but it is only 0 bytes";
         });
-        std::array<char, sizeof(mpz_size_t) + sizeof(::mp_limb_t) * 2u> small_arr;
-        const mpz_size_t tmp_size = 3;
+        std::array<char, sizeof(detail::mpz_size_t) + sizeof(::mp_limb_t) * 2u> small_arr;
+        const detail::mpz_size_t tmp_size = 3;
         std::copy(reinterpret_cast<const char *>(&tmp_size),
-                  reinterpret_cast<const char *>(&tmp_size) + sizeof(mpz_size_t), make_uai(small_arr.data()));
+                  reinterpret_cast<const char *>(&tmp_size) + sizeof(detail::mpz_size_t),
+                  detail::make_uai(small_arr.data()));
         REQUIRE_THROWS_PREDICATE(binary_load(n1, small_arr), std::invalid_argument,
                                  [](const std::invalid_argument &ex) {
                                      return std::string(ex.what())
@@ -669,9 +673,10 @@ struct binary_s11n_tester {
                                                "than the integer size in limbs stored in the header of the vector (3)";
                                  });
         std::vector<char> small_vec;
-        small_vec.resize(sizeof(mpz_size_t) + sizeof(::mp_limb_t) * 2u);
+        small_vec.resize(sizeof(detail::mpz_size_t) + sizeof(::mp_limb_t) * 2u);
         std::copy(reinterpret_cast<const char *>(&tmp_size),
-                  reinterpret_cast<const char *>(&tmp_size) + sizeof(mpz_size_t), make_uai(small_vec.data()));
+                  reinterpret_cast<const char *>(&tmp_size) + sizeof(detail::mpz_size_t),
+                  detail::make_uai(small_vec.data()));
         REQUIRE_THROWS_PREDICATE(binary_load(n1, small_vec), std::invalid_argument,
                                  [](const std::invalid_argument &ex) {
                                      return std::string(ex.what())
@@ -687,7 +692,7 @@ struct binary_s11n_tester {
         REQUIRE(n1 == 4);
         clear_ss();
         size = 1;
-        ss.write(reinterpret_cast<const char *>(&size), sizeof(mpz_size_t));
+        ss.write(reinterpret_cast<const char *>(&size), sizeof(detail::mpz_size_t));
         REQUIRE(binary_load(n1, ss) == 0u);
         REQUIRE(n1 == 4);
         clear_ss();
@@ -700,3 +705,16 @@ TEST_CASE("binary s11n")
 {
     tuple_for_each(sizes{}, binary_s11n_tester{});
 }
+
+#if MPPP_CPLUSPLUS >= 201703L
+
+TEST_CASE("integer nts")
+{
+    REQUIRE(std::is_nothrow_swappable_v<integer<1>>);
+    REQUIRE(std::is_nothrow_swappable_v<integer<2>>);
+    REQUIRE(std::is_nothrow_swappable_v<integer<6>>);
+    REQUIRE(std::is_nothrow_swappable_v<integer<10>>);
+    REQUIRE(std::is_nothrow_swappable_v<integer<15>>);
+}
+
+#endif

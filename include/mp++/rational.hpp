@@ -1,4 +1,4 @@
-// Copyright 2016-2018 Francesco Biscani (bluescarni@gmail.com)
+// Copyright 2016-2019 Francesco Biscani (bluescarni@gmail.com)
 //
 // This file is part of the mp++ library.
 //
@@ -20,70 +20,75 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
-#if MPPP_CPLUSPLUS >= 201703L
-#include <string_view>
-#endif
 #include <type_traits>
 #include <utility>
 #include <vector>
 
+#if defined(MPPP_HAVE_STRING_VIEW)
+#include <string_view>
+#endif
+
 #include <mp++/concepts.hpp>
-#include <mp++/detail/demangle.hpp>
 #include <mp++/detail/fwd_decl.hpp>
 #include <mp++/detail/gmp.hpp>
+#include <mp++/detail/type_traits.hpp>
+#include <mp++/detail/utils.hpp>
+#include <mp++/detail/visibility.hpp>
+#include <mp++/exceptions.hpp>
+#include <mp++/integer.hpp>
+#include <mp++/type_name.hpp>
+
 #if defined(MPPP_WITH_MPFR)
 #include <mp++/detail/mpfr.hpp>
 #endif
-#include <mp++/detail/type_traits.hpp>
-#include <mp++/exceptions.hpp>
-#include <mp++/integer.hpp>
 
 namespace mppp
 {
 
 template <typename T, std::size_t SSize>
-using is_rational_interoperable = disjunction<is_cpp_interoperable<T>, std::is_same<T, integer<SSize>>>;
+using is_rational_interoperable = detail::disjunction<is_cpp_interoperable<T>, std::is_same<T, integer<SSize>>>;
 
 template <typename T, std::size_t SSize>
 #if defined(MPPP_HAVE_CONCEPTS)
-concept bool RationalInteroperable = is_rational_interoperable<T, SSize>::value;
+MPPP_CONCEPT_DECL RationalInteroperable = is_rational_interoperable<T, SSize>::value;
 #else
-using rational_interoperable_enabler = enable_if_t<is_rational_interoperable<T, SSize>::value, int>;
+using rational_interoperable_enabler = detail::enable_if_t<is_rational_interoperable<T, SSize>::value, int>;
 #endif
 
 template <typename T, std::size_t SSize>
 using is_rational_integral_interoperable
-    = disjunction<is_cpp_integral_interoperable<T>, std::is_same<T, integer<SSize>>>;
+    = detail::disjunction<is_cpp_integral_interoperable<T>, std::is_same<T, integer<SSize>>>;
 
 template <typename T, std::size_t SSize>
 #if defined(MPPP_HAVE_CONCEPTS)
-concept bool RationalIntegralInteroperable = is_rational_integral_interoperable<T, SSize>::value;
+MPPP_CONCEPT_DECL RationalIntegralInteroperable = is_rational_integral_interoperable<T, SSize>::value;
 #else
-using rational_integral_interoperable_enabler = enable_if_t<is_rational_integral_interoperable<T, SSize>::value, int>;
+using rational_integral_interoperable_enabler
+    = detail::enable_if_t<is_rational_integral_interoperable<T, SSize>::value, int>;
 #endif
 
 template <typename T, std::size_t SSize>
-using is_rational_cvr_interoperable = is_rational_interoperable<uncvref_t<T>, SSize>;
+using is_rational_cvr_interoperable = is_rational_interoperable<detail::uncvref_t<T>, SSize>;
 
 template <typename T, std::size_t SSize>
 #if defined(MPPP_HAVE_CONCEPTS)
-concept bool RationalCvrInteroperable = is_rational_cvr_interoperable<T, SSize>::value;
+MPPP_CONCEPT_DECL RationalCvrInteroperable = is_rational_cvr_interoperable<T, SSize>::value;
 #else
-using rational_cvr_interoperable_enabler = enable_if_t<is_rational_cvr_interoperable<T, SSize>::value, int>;
+using rational_cvr_interoperable_enabler = detail::enable_if_t<is_rational_cvr_interoperable<T, SSize>::value, int>;
 #endif
 
 template <typename T, std::size_t SSize>
-using is_rational_cvr_integral_interoperable = is_rational_integral_interoperable<uncvref_t<T>, SSize>;
+using is_rational_cvr_integral_interoperable = is_rational_integral_interoperable<detail::uncvref_t<T>, SSize>;
 
 template <typename T, std::size_t SSize>
 #if defined(MPPP_HAVE_CONCEPTS)
-concept bool RationalCvrIntegralInteroperable = is_rational_cvr_integral_interoperable<T, SSize>::value;
+MPPP_CONCEPT_DECL RationalCvrIntegralInteroperable = is_rational_cvr_integral_interoperable<T, SSize>::value;
 #else
 using rational_cvr_integral_interoperable_enabler
-    = enable_if_t<is_rational_cvr_integral_interoperable<T, SSize>::value, int>;
+    = detail::enable_if_t<is_rational_cvr_integral_interoperable<T, SSize>::value, int>;
 #endif
 
-inline namespace detail
+namespace detail
 {
 
 // This is useful in various bits below.
@@ -273,14 +278,15 @@ private:
     // A tag for private constrcutors.
     struct ptag {
     };
-    template <typename T, enable_if_t<disjunction<std::is_same<float, T>, std::is_same<double, T>>::value, int> = 0>
+    template <typename T,
+              detail::enable_if_t<detail::disjunction<std::is_same<float, T>, std::is_same<double, T>>::value, int> = 0>
     explicit rational(const ptag &, const T &x)
     {
         if (mppp_unlikely(!std::isfinite(x))) {
             throw std::domain_error("Cannot construct a rational from the non-finite floating-point value "
-                                    + mppp::to_string(x));
+                                    + detail::to_string(x));
         }
-        MPPP_MAYBE_TLS mpq_raii q;
+        MPPP_MAYBE_TLS detail::mpq_raii q;
         ::mpq_set_d(&q.m_mpq, static_cast<double>(x));
         m_num = mpq_numref(&q.m_mpq);
         m_den = mpq_denref(&q.m_mpq);
@@ -290,13 +296,13 @@ private:
     {
         if (mppp_unlikely(!std::isfinite(x))) {
             throw std::domain_error("Cannot construct a rational from the non-finite floating-point value "
-                                    + mppp::to_string(x));
+                                    + detail::to_string(x));
         }
         // NOTE: static checks for overflows and for the precision value are done in mpfr.hpp.
         constexpr int d2 = std::numeric_limits<long double>::max_digits10 * 4;
-        MPPP_MAYBE_TLS mpfr_raii mpfr(static_cast<::mpfr_prec_t>(d2));
-        MPPP_MAYBE_TLS mpf_raii mpf(static_cast<::mp_bitcnt_t>(d2));
-        MPPP_MAYBE_TLS mpq_raii mpq;
+        MPPP_MAYBE_TLS detail::mpfr_raii mpfr(static_cast<::mpfr_prec_t>(d2));
+        MPPP_MAYBE_TLS detail::mpf_raii mpf(static_cast<::mp_bitcnt_t>(d2));
+        MPPP_MAYBE_TLS detail::mpq_raii mpq;
         // NOTE: we go through an mpfr->mpf->mpq conversion chain as
         // mpfr_get_q() does not exist.
         // NOTE: probably coming in MPFR 4:
@@ -308,7 +314,7 @@ private:
         m_den = mpq_denref(&mpq.m_mpq);
     }
 #endif
-    template <typename T, enable_if_t<is_rational_cvr_integral_interoperable<T, SSize>::value, int> = 0>
+    template <typename T, detail::enable_if_t<is_rational_cvr_integral_interoperable<T, SSize>::value, int> = 0>
     explicit rational(const ptag &, T &&n) : m_num(std::forward<T>(n)), m_den(1u)
     {
     }
@@ -326,44 +332,43 @@ public:
      * @throws std::domain_error if \p x is a non-finite floating-point value.
      */
 #if defined(MPPP_HAVE_CONCEPTS)
-    explicit rational(RationalCvrInteroperable<SSize> &&x)
+    template <RationalCvrInteroperable<SSize> T>
 #else
     template <typename T, rational_cvr_interoperable_enabler<T, SSize> = 0>
-    explicit rational(T &&x)
 #endif
-        : rational(ptag{}, std::forward<decltype(x)>(x))
+    explicit rational(T &&x) : rational(ptag{}, std::forward<T>(x))
     {
     }
-/// Constructor from numerator and denominator.
-/**
- * \rststar
- * This constructor is enabled only if both ``T`` and ``U`` satisfy the
- * :cpp:concept:`~mppp::RationalCvrIntegralInteroperable` concept. The input value ``n`` will be used to initialise the
- * numerator, while ``d`` will be used to initialise the denominator. If ``make_canonical`` is ``true``
- * (the default), then :cpp:func:`~mppp::rational::canonicalise()` will be called after the construction
- * of numerator and denominator.
- *
- * .. warning::
- *
- *    If this constructor is called with ``make_canonical`` set to ``false``, it will be the user's responsibility
- *    to ensure that ``this`` is canonicalised before using it with other mp++ functions. Failure to do
- *    so will result in undefined behaviour.
- * \endrststar
- *
- * @param n the numerator.
- * @param d the denominator.
- * @param make_canonical if \p true, the rational will be canonicalised after the construction
- * of numerator and denominator.
- *
- * @throws zero_division_error if the denominator is zero.
- */
+    /// Constructor from numerator and denominator.
+    /**
+     * \rststar
+     * This constructor is enabled only if both ``T`` and ``U`` satisfy the
+     * :cpp:concept:`~mppp::RationalCvrIntegralInteroperable` concept. The input value ``n`` will be used to initialise
+     * the numerator, while ``d`` will be used to initialise the denominator. If ``make_canonical`` is ``true`` (the
+     * default), then :cpp:func:`~mppp::rational::canonicalise()` will be called after the construction of numerator and
+     * denominator.
+     *
+     * .. warning::
+     *
+     *    If this constructor is called with ``make_canonical`` set to ``false``, it will be the user's responsibility
+     *    to ensure that ``this`` is canonicalised before using it with other mp++ functions. Failure to do
+     *    so will result in undefined behaviour.
+     * \endrststar
+     *
+     * @param n the numerator.
+     * @param d the denominator.
+     * @param make_canonical if \p true, the rational will be canonicalised after the construction
+     * of numerator and denominator.
+     *
+     * @throws zero_division_error if the denominator is zero.
+     */
 #if defined(MPPP_HAVE_CONCEPTS)
     template <RationalCvrIntegralInteroperable<SSize> T, RationalCvrIntegralInteroperable<SSize> U>
 #else
     template <typename T, typename U,
-              enable_if_t<conjunction<is_rational_cvr_integral_interoperable<T, SSize>,
-                                      is_rational_cvr_integral_interoperable<U, SSize>>::value,
-                          int> = 0>
+              detail::enable_if_t<detail::conjunction<is_rational_cvr_integral_interoperable<T, SSize>,
+                                                      is_rational_cvr_integral_interoperable<U, SSize>>::value,
+                                  int> = 0>
 #endif
     explicit rational(T &&n, U &&d, bool make_canonical = true) : m_num(std::forward<T>(n)), m_den(std::forward<U>(d))
     {
@@ -400,7 +405,7 @@ private:
         dispatch_c_string_ctor(s, base);
     }
     explicit rational(const ptag &, const std::string &s, int base) : rational(s.c_str(), base) {}
-#if MPPP_CPLUSPLUS >= 201703L
+#if defined(MPPP_HAVE_STRING_VIEW)
     explicit rational(const ptag &, const std::string_view &s, int base) : rational(s.data(), s.data() + s.size(), base)
     {
     }
@@ -425,13 +430,11 @@ public:
      * memory errors in standard containers.
      */
 #if defined(MPPP_HAVE_CONCEPTS)
-    explicit rational(const StringType &s,
+    template <StringType T>
 #else
     template <typename T, string_type_enabler<T> = 0>
-    explicit rational(const T &s,
 #endif
-                      int base = 10)
-        : rational(ptag{}, s, base)
+    explicit rational(const T &s, int base = 10) : rational(ptag{}, s, base)
     {
     }
     /// Constructor from range of characters.
@@ -572,18 +575,17 @@ public:
      *
      * @return a reference to ``this``.
      *
-     * @throws unspecified any exception thrown by the generic constructor of \link mppp::rational\endlink.
+     * @throws unspecified any exception thrown by the generic constructor.
      */
 #if defined(MPPP_HAVE_CONCEPTS)
-    rational &operator=(RationalCvrInteroperable<SSize> &&x)
+    template <RationalCvrInteroperable<SSize> T>
 #else
     template <typename T, rational_cvr_interoperable_enabler<T, SSize> = 0>
-    rational &operator=(T &&x)
 #endif
+    rational &operator=(T &&x)
     {
-        dispatch_assignment(
-            std::forward<decltype(x)>(x),
-            std::integral_constant<bool, is_rational_cvr_integral_interoperable<decltype(x), SSize>::value>{});
+        dispatch_assignment(std::forward<T>(x),
+                            std::integral_constant<bool, is_rational_cvr_integral_interoperable<T, SSize>::value>{});
         return *this;
     }
     /// Assignment from string.
@@ -605,11 +607,11 @@ public:
      * @throws unspecified any exception thrown by the constructor from string.
      */
 #if defined(MPPP_HAVE_CONCEPTS)
-    rational &operator=(const StringType &s)
+    template <StringType T>
 #else
     template <typename T, string_type_enabler<T> = 0>
-    rational &operator=(const T &s)
 #endif
+    rational &operator=(const T &s)
     {
         return *this = rational{s};
     }
@@ -729,38 +731,41 @@ public:
 
 private:
     // Conversion to int_t.
-    template <typename T, enable_if_t<std::is_same<int_t, T>::value, int> = 0>
+    template <typename T, detail::enable_if_t<std::is_same<int_t, T>::value, int> = 0>
     std::pair<bool, T> dispatch_conversion() const
     {
         return std::make_pair(true, m_num / m_den);
     }
     // Conversion to bool.
-    template <typename T, enable_if_t<std::is_same<bool, T>::value, int> = 0>
+    template <typename T, detail::enable_if_t<std::is_same<bool, T>::value, int> = 0>
     std::pair<bool, T> dispatch_conversion() const
     {
         return std::make_pair(true, m_num.m_int.m_st._mp_size != 0);
     }
     // Conversion to integral types other than bool.
-    template <typename T, enable_if_t<conjunction<is_integral<T>, negation<std::is_same<bool, T>>>::value, int> = 0>
+    template <typename T,
+              detail::enable_if_t<
+                  detail::conjunction<detail::is_integral<T>, detail::negation<std::is_same<bool, T>>>::value, int> = 0>
     std::pair<bool, T> dispatch_conversion() const
     {
         return static_cast<int_t>(*this).template dispatch_conversion<T>();
     }
     // Conversion to float/double.
-    template <typename T, enable_if_t<disjunction<std::is_same<T, float>, std::is_same<T, double>>::value, int> = 0>
+    template <typename T,
+              detail::enable_if_t<detail::disjunction<std::is_same<T, float>, std::is_same<T, double>>::value, int> = 0>
     std::pair<bool, T> dispatch_conversion() const
     {
-        const auto v = get_mpq_view(*this);
+        const auto v = detail::get_mpq_view(*this);
         return std::make_pair(true, static_cast<T>(::mpq_get_d(&v)));
     }
 #if defined(MPPP_WITH_MPFR)
     // Conversion to long double.
-    template <typename T, enable_if_t<std::is_same<T, long double>::value, int> = 0>
+    template <typename T, detail::enable_if_t<std::is_same<T, long double>::value, int> = 0>
     std::pair<bool, T> dispatch_conversion() const
     {
         constexpr int d2 = std::numeric_limits<long double>::max_digits10 * 4;
-        MPPP_MAYBE_TLS mpfr_raii mpfr(static_cast<::mpfr_prec_t>(d2));
-        const auto v = get_mpq_view(*this);
+        MPPP_MAYBE_TLS detail::mpfr_raii mpfr(static_cast<::mpfr_prec_t>(d2));
+        const auto v = detail::get_mpq_view(*this);
         ::mpfr_set_q(&mpfr.m_mpfr, &v, MPFR_RNDN);
         return std::make_pair(true, ::mpfr_get_ld(&mpfr.m_mpfr, MPFR_RNDN));
     }
@@ -792,7 +797,7 @@ public:
     {
         auto retval = dispatch_conversion<T>();
         if (mppp_unlikely(!retval.first)) {
-            throw std::overflow_error("Conversion of the rational " + to_string() + " to the type '" + demangle<T>()
+            throw std::overflow_error("Conversion of the rational " + to_string() + " to the type '" + type_name<T>()
                                       + "' results in overflow");
         }
         return std::move(retval.second);
@@ -932,7 +937,7 @@ public:
             divexact_gcd(m_den, m_den, g);
         }
         // Fix mismatch in signs.
-        fix_den_sign(*this);
+        detail::fix_den_sign(*this);
         // NOTE: consider attempting demoting num/den. Let's KIS for now.
         return *this;
     }
@@ -1002,8 +1007,8 @@ public:
         if (mppp_unlikely(is_zero())) {
             throw zero_division_error("Cannot invert a zero rational");
         }
-        std::swap(m_num, m_den);
-        fix_den_sign(*this);
+        swap(m_num, m_den);
+        detail::fix_den_sign(*this);
         return *this;
     }
     /// Test if the value is zero.
@@ -1045,33 +1050,16 @@ constexpr std::size_t rational<SSize>::ssize;
 
 #endif
 
-inline namespace detail
+// Swap.
+template <std::size_t SSize>
+inline void swap(rational<SSize> &q1, rational<SSize> &q2) noexcept
 {
-
-// Some misc tests to check that the mpq struct conforms to our expectations.
-struct expected_mpq_struct_t {
-    mpz_struct_t _mp_num;
-    mpz_struct_t _mp_den;
-};
-
-static_assert(sizeof(expected_mpq_struct_t) == sizeof(mpq_struct_t)
-                  && offsetof(mpq_struct_t, _mp_num) == offsetof(expected_mpq_struct_t, _mp_num)
-                  && offsetof(mpq_struct_t, _mp_den) == offsetof(expected_mpq_struct_t, _mp_den),
-              "Invalid mpq_t struct layout.");
-
-#if MPPP_CPLUSPLUS >= 201703L
-
-constexpr bool test_mpq_struct_t()
-{
-    auto [num, den] = mpq_struct_t{};
-    (void)num;
-    (void)den;
-    return std::is_same<decltype(num), mpz_struct_t>::value && std::is_same<decltype(den), mpz_struct_t>::value;
+    swap(q1._get_num(), q2._get_num());
+    swap(q1._get_den(), q2._get_den());
 }
 
-static_assert(test_mpq_struct_t(), "The mpq_struct_t does not have the expected layout.");
-
-#endif
+namespace detail
+{
 
 // Let's keep the view machinery private for now, as it suffers from the potential aliasing
 // issues described in the mpz_view documentation. In this case, we have to fill in a shallow mpq_struct
@@ -1139,17 +1127,6 @@ struct rational_common_type<T, rational<SSize>, enable_if_t<is_cpp_floating_poin
 
 template <typename T, typename U>
 using rational_common_t = typename rational_common_type<T, U>::type;
-
-// Implementation of the rational op types concept, used in various operators.
-template <typename T, typename U>
-using are_rational_op_types = is_detected<rational_common_t, T, U>;
-
-template <typename T, typename U>
-#if defined(MPPP_HAVE_CONCEPTS)
-concept bool RationalOpTypes = are_rational_op_types<T, U>::value;
-#else
-using rational_op_types_enabler = enable_if_t<are_rational_op_types<T, U>::value, int>;
-#endif
 
 // Implementation of binary add/sub. The NewRop flag indicates that
 // rop is a def-cted rational distinct from op1 and op2.
@@ -1258,6 +1235,17 @@ inline void addsub_impl(rational<SSize> &rop, const rational<SSize> &op1, const 
 }
 } // namespace detail
 
+// Implementation of the rational op types concept, used in various operators.
+template <typename T, typename U>
+using are_rational_op_types = detail::is_detected<detail::rational_common_t, T, U>;
+
+template <typename T, typename U>
+#if defined(MPPP_HAVE_CONCEPTS)
+MPPP_CONCEPT_DECL RationalOpTypes = are_rational_op_types<T, U>::value;
+#else
+using rational_op_types_enabler = detail::enable_if_t<are_rational_op_types<T, U>::value, int>;
+#endif
+
 /** @defgroup rational_conversion rational_conversion
  *  @{
  */
@@ -1279,12 +1267,12 @@ inline void addsub_impl(rational<SSize> &rop, const rational<SSize> &op1, const 
  * a C++ integral which cannot represent the truncated value of ``q``.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <std::size_t SSize>
-inline bool get(RationalInteroperable<SSize> &rop, const rational<SSize> &q)
+template <typename T, std::size_t SSize>
+requires RationalInteroperable<T, SSize>
 #else
 template <typename T, std::size_t SSize, rational_interoperable_enabler<T, SSize> = 0>
-inline bool get(T &rop, const rational<SSize> &q)
 #endif
+    inline bool get(T &rop, const rational<SSize> &q)
 {
     return q.get(rop);
 }
@@ -1308,7 +1296,7 @@ inline bool get(T &rop, const rational<SSize> &q)
 template <std::size_t SSize>
 inline rational<SSize> &add(rational<SSize> &rop, const rational<SSize> &op1, const rational<SSize> &op2)
 {
-    addsub_impl<true, false>(rop, op1, op2);
+    detail::addsub_impl<true, false>(rop, op1, op2);
     return rop;
 }
 
@@ -1325,11 +1313,11 @@ inline rational<SSize> &add(rational<SSize> &rop, const rational<SSize> &op1, co
 template <std::size_t SSize>
 inline rational<SSize> &sub(rational<SSize> &rop, const rational<SSize> &op1, const rational<SSize> &op2)
 {
-    addsub_impl<false, false>(rop, op1, op2);
+    detail::addsub_impl<false, false>(rop, op1, op2);
     return rop;
 }
 
-inline namespace detail
+namespace detail
 {
 template <bool NewRop, std::size_t SSize>
 inline void mul_impl(rational<SSize> &rop, const rational<SSize> &op1, const rational<SSize> &op2)
@@ -1414,7 +1402,7 @@ inline void mul_impl(rational<SSize> &rop, const rational<SSize> &op1, const rat
 template <std::size_t SSize>
 inline rational<SSize> &mul(rational<SSize> &rop, const rational<SSize> &op1, const rational<SSize> &op2)
 {
-    mul_impl<false>(rop, op1, op2);
+    detail::mul_impl<false>(rop, op1, op2);
     return rop;
 }
 
@@ -1449,9 +1437,9 @@ inline rational<SSize> &div(rational<SSize> &rop, const rational<SSize> &op1, co
         // Set rop to 1/rop by swapping num/den.
         // NOTE: we already checked that op2 is nonzero, so inverting it
         // does not yield division by zero.
-        std::swap(rop._get_num(), rop._get_den());
+        swap(rop._get_num(), rop._get_den());
         // Fix den sign.
-        fix_den_sign(rop);
+        detail::fix_den_sign(rop);
         // Multiply by op1.
         mul(rop, rop, op1);
         return rop;
@@ -1510,7 +1498,7 @@ inline rational<SSize> &div(rational<SSize> &rop, const rational<SSize> &op1, co
         mul(rop._get_den(), tmp1, tmp2);
     }
     // Fix wrong sign in the den.
-    fix_den_sign(rop);
+    detail::fix_den_sign(rop);
     return rop;
 }
 
@@ -1610,9 +1598,13 @@ inline rational<SSize> inv(const rational<SSize> &q)
 
 /** @} */
 
-/** @defgroup rational_io rational_io
- *  @{
- */
+namespace detail
+{
+
+MPPP_DLL_PUBLIC std::ostream &rational_stream_operator_impl(std::ostream &, const mpz_struct_t *, const mpz_struct_t *,
+                                                            int, bool);
+
+}
 
 /// Output stream operator.
 /**
@@ -1631,32 +1623,9 @@ inline rational<SSize> inv(const rational<SSize> &q)
 template <std::size_t SSize>
 inline std::ostream &operator<<(std::ostream &os, const rational<SSize> &q)
 {
-    return os << q.to_string();
+    return detail::rational_stream_operator_impl(os, q.get_num().get_mpz_view(), q.get_den().get_mpz_view(), q.sgn(),
+                                                 q.get_den().is_one());
 }
-
-/// Input stream operator.
-/**
- * \rststar
- * This operator is equivalent to extracting a line from the stream and assigning it to ``q``.
- * \endrststar
- *
- * @param is the input stream.
- * @param q the rational to which the string extracted from the stream will be assigned.
- *
- * @return a reference to \p is.
- *
- * @throws unspecified any exception thrown by \link mppp::rational rational\endlink's assignment operator from string.
- */
-template <std::size_t SSize>
-inline std::istream &operator>>(std::istream &is, rational<SSize> &q)
-{
-    MPPP_MAYBE_TLS std::string tmp_str;
-    std::getline(is, tmp_str);
-    q = tmp_str;
-    return is;
-}
-
-/** @} */
 
 /** @defgroup rational_operators rational_operators
  *  @{
@@ -1674,7 +1643,7 @@ inline rational<SSize> operator+(const rational<SSize> &q)
     return q;
 }
 
-inline namespace detail
+namespace detail
 {
 
 // Dispatching for the binary addition operator.
@@ -1746,17 +1715,17 @@ inline T dispatch_binary_add(T x, const rational<SSize> &op2)
  * @return <tt>op1 + op2</tt>.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline auto operator+(const RationalOpTypes<T> &op1, const T &op2)
+template <typename T, typename U>
+requires RationalOpTypes<T, U> inline auto operator+(const T &op1, const U &op2)
 #else
 template <typename T, typename U>
-inline rational_common_t<T, U> operator+(const T &op1, const U &op2)
+inline detail::rational_common_t<T, U> operator+(const T &op1, const U &op2)
 #endif
 {
-    return dispatch_binary_add(op1, op2);
+    return detail::dispatch_binary_add(op1, op2);
 }
 
-inline namespace detail
+namespace detail
 {
 
 // Dispatching for in-place add.
@@ -1806,14 +1775,14 @@ inline void dispatch_in_place_add(T &rop, const rational<SSize> &op)
  * by the conversion operator of \link mppp::rational rational\endlink.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline auto &operator+=(RationalOpTypes<T> &rop, const T &op)
+template <typename T, typename U>
+requires RationalOpTypes<T, U>
 #else
 template <typename T, typename U, rational_op_types_enabler<T, U> = 0>
-inline T &operator+=(T &rop, const U &op)
 #endif
+    inline T &operator+=(T &rop, const U &op)
 {
-    dispatch_in_place_add(rop, op);
+    detail::dispatch_in_place_add(rop, op);
     return rop;
 }
 
@@ -1862,7 +1831,7 @@ inline rational<SSize> operator-(const rational<SSize> &q)
     return retval;
 }
 
-inline namespace detail
+namespace detail
 {
 
 // Dispatching for the binary subtraction operator.
@@ -1938,17 +1907,17 @@ inline T dispatch_binary_sub(T x, const rational<SSize> &op2)
  * @return <tt>op1 - op2</tt>.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline auto operator-(const RationalOpTypes<T> &op1, const T &op2)
+template <typename T, typename U>
+requires RationalOpTypes<T, U> inline auto operator-(const T &op1, const U &op2)
 #else
 template <typename T, typename U>
-inline rational_common_t<T, U> operator-(const T &op1, const U &op2)
+inline detail::rational_common_t<T, U> operator-(const T &op1, const U &op2)
 #endif
 {
-    return dispatch_binary_sub(op1, op2);
+    return detail::dispatch_binary_sub(op1, op2);
 }
 
-inline namespace detail
+namespace detail
 {
 
 // Dispatching for in-place sub.
@@ -1998,14 +1967,14 @@ inline void dispatch_in_place_sub(T &rop, const rational<SSize> &op)
  * by the conversion operator of \link mppp::rational rational\endlink.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline auto &operator-=(RationalOpTypes<T> &rop, const T &op)
+template <typename T, typename U>
+requires RationalOpTypes<T, U>
 #else
 template <typename T, typename U, rational_op_types_enabler<T, U> = 0>
-inline T &operator-=(T &rop, const U &op)
 #endif
+    inline T &operator-=(T &rop, const U &op)
 {
-    dispatch_in_place_sub(rop, op);
+    detail::dispatch_in_place_sub(rop, op);
     return rop;
 }
 
@@ -2040,7 +2009,7 @@ inline rational<SSize> operator--(rational<SSize> &q, int)
     return retval;
 }
 
-inline namespace detail
+namespace detail
 {
 
 // Dispatching for the binary multiplication operator.
@@ -2123,17 +2092,17 @@ inline T dispatch_binary_mul(T x, const rational<SSize> &op2)
  * @return <tt>op1 * op2</tt>.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline auto operator*(const RationalOpTypes<T> &op1, const T &op2)
+template <typename T, typename U>
+requires RationalOpTypes<T, U> inline auto operator*(const T &op1, const U &op2)
 #else
 template <typename T, typename U>
-inline rational_common_t<T, U> operator*(const T &op1, const U &op2)
+inline detail::rational_common_t<T, U> operator*(const T &op1, const U &op2)
 #endif
 {
-    return dispatch_binary_mul(op1, op2);
+    return detail::dispatch_binary_mul(op1, op2);
 }
 
-inline namespace detail
+namespace detail
 {
 
 // Dispatching for in-place mul.
@@ -2195,18 +2164,18 @@ inline void dispatch_in_place_mul(T &rop, const rational<SSize> &op)
  * by the conversion operator of \link mppp::rational rational\endlink.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline auto &operator*=(RationalOpTypes<T> &rop, const T &op)
+template <typename T, typename U>
+requires RationalOpTypes<T, U>
 #else
 template <typename T, typename U, rational_op_types_enabler<T, U> = 0>
-inline T &operator*=(T &rop, const U &op)
 #endif
+    inline T &operator*=(T &rop, const U &op)
 {
-    dispatch_in_place_mul(rop, op);
+    detail::dispatch_in_place_mul(rop, op);
     return rop;
 }
 
-inline namespace detail
+namespace detail
 {
 
 // Dispatching for the binary division operator.
@@ -2327,17 +2296,17 @@ inline T dispatch_binary_div(T x, const rational<SSize> &op2)
  * @throws zero_division_error if the division does not involve floating-point types and \p op2 is zero.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline auto operator/(const RationalOpTypes<T> &op1, const T &op2)
+template <typename T, typename U>
+requires RationalOpTypes<T, U> inline auto operator/(const T &op1, const U &op2)
 #else
 template <typename T, typename U>
-inline rational_common_t<T, U> operator/(const T &op1, const U &op2)
+inline detail::rational_common_t<T, U> operator/(const T &op1, const U &op2)
 #endif
 {
-    return dispatch_binary_div(op1, op2);
+    return detail::dispatch_binary_div(op1, op2);
 }
 
-inline namespace detail
+namespace detail
 {
 
 // Dispatching for in-place div.
@@ -2407,18 +2376,18 @@ inline void dispatch_in_place_div(T &rop, const rational<SSize> &op)
  * by the conversion operator of \link mppp::rational rational\endlink.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline auto &operator/=(RationalOpTypes<T> &rop, const T &op)
+template <typename T, typename U>
+requires RationalOpTypes<T, U>
 #else
 template <typename T, typename U, rational_op_types_enabler<T, U> = 0>
-inline T &operator/=(T &rop, const U &op)
 #endif
+    inline T &operator/=(T &rop, const U &op)
 {
-    dispatch_in_place_div(rop, op);
+    detail::dispatch_in_place_div(rop, op);
     return rop;
 }
 
-inline namespace detail
+namespace detail
 {
 
 template <std::size_t SSize>
@@ -2460,14 +2429,14 @@ inline bool dispatch_equality(const T &op1, const rational<SSize> &op2)
  * @return \p true if <tt>op1 == op2</tt>, \p false otherwise.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline bool operator==(const RationalOpTypes<T> &op1, const T &op2)
+template <typename T, typename U>
+requires RationalOpTypes<T, U>
 #else
 template <typename T, typename U, rational_op_types_enabler<T, U> = 0>
-inline bool operator==(const T &op1, const U &op2)
 #endif
+    inline bool operator==(const T &op1, const U &op2)
 {
-    return dispatch_equality(op1, op2);
+    return detail::dispatch_equality(op1, op2);
 }
 
 /// Inequality operator.
@@ -2478,17 +2447,17 @@ inline bool operator==(const T &op1, const U &op2)
  * @return \p true if <tt>op1 != op2</tt>, \p false otherwise.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline bool operator!=(const RationalOpTypes<T> &op1, const T &op2)
+template <typename T, typename U>
+requires RationalOpTypes<T, U>
 #else
 template <typename T, typename U, rational_op_types_enabler<T, U> = 0>
-inline bool operator!=(const T &op1, const U &op2)
 #endif
+    inline bool operator!=(const T &op1, const U &op2)
 {
     return !(op1 == op2);
 }
 
-inline namespace detail
+namespace detail
 {
 
 // Less-than operator.
@@ -2517,10 +2486,7 @@ inline bool dispatch_less_than(const rational<SSize> &a, T n)
 }
 
 template <typename T, std::size_t SSize, enable_if_t<is_cpp_integral_interoperable<T>::value, int> = 0>
-inline bool dispatch_less_than(T n, const rational<SSize> &a)
-{
-    return dispatch_greater_than(a, integer<SSize>{n});
-}
+bool dispatch_less_than(T, const rational<SSize> &);
 
 template <typename T, std::size_t SSize, enable_if_t<is_cpp_floating_point_interoperable<T>::value, int> = 0>
 inline bool dispatch_less_than(const rational<SSize> &a, T x)
@@ -2529,10 +2495,7 @@ inline bool dispatch_less_than(const rational<SSize> &a, T x)
 }
 
 template <typename T, std::size_t SSize, enable_if_t<is_cpp_floating_point_interoperable<T>::value, int> = 0>
-inline bool dispatch_less_than(T x, const rational<SSize> &a)
-{
-    return dispatch_greater_than(a, x);
-}
+inline bool dispatch_less_than(T, const rational<SSize> &);
 
 // Greater-than operator.
 template <std::size_t SSize>
@@ -2576,6 +2539,19 @@ inline bool dispatch_greater_than(T x, const rational<SSize> &a)
 {
     return dispatch_less_than(a, x);
 }
+
+// Implement them here, as we need visibility of dispatch_greater_than().
+template <typename T, std::size_t SSize, enable_if_t<is_cpp_integral_interoperable<T>::value, int>>
+inline bool dispatch_less_than(T n, const rational<SSize> &a)
+{
+    return dispatch_greater_than(a, integer<SSize>{n});
+}
+
+template <typename T, std::size_t SSize, enable_if_t<is_cpp_floating_point_interoperable<T>::value, int>>
+inline bool dispatch_less_than(T x, const rational<SSize> &a)
+{
+    return dispatch_greater_than(a, x);
+}
 } // namespace detail
 
 /// Less-than operator.
@@ -2586,14 +2562,14 @@ inline bool dispatch_greater_than(T x, const rational<SSize> &a)
  * @return \p true if <tt>op1 < op2</tt>, \p false otherwise.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline bool operator<(const RationalOpTypes<T> &op1, const T &op2)
+template <typename T, typename U>
+requires RationalOpTypes<T, U>
 #else
 template <typename T, typename U, rational_op_types_enabler<T, U> = 0>
-inline bool operator<(const T &op1, const U &op2)
 #endif
+    inline bool operator<(const T &op1, const U &op2)
 {
-    return dispatch_less_than(op1, op2);
+    return detail::dispatch_less_than(op1, op2);
 }
 
 /// Less-than or equal operator.
@@ -2604,12 +2580,12 @@ inline bool operator<(const T &op1, const U &op2)
  * @return \p true if <tt>op1 <= op2</tt>, \p false otherwise.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline bool operator<=(const RationalOpTypes<T> &op1, const T &op2)
+template <typename T, typename U>
+requires RationalOpTypes<T, U>
 #else
 template <typename T, typename U, rational_op_types_enabler<T, U> = 0>
-inline bool operator<=(const T &op1, const U &op2)
 #endif
+    inline bool operator<=(const T &op1, const U &op2)
 {
     return !(op1 > op2);
 }
@@ -2622,14 +2598,14 @@ inline bool operator<=(const T &op1, const U &op2)
  * @return \p true if <tt>op1 > op2</tt>, \p false otherwise.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline bool operator>(const RationalOpTypes<T> &op1, const T &op2)
+template <typename T, typename U>
+requires RationalOpTypes<T, U>
 #else
 template <typename T, typename U, rational_op_types_enabler<T, U> = 0>
-inline bool operator>(const T &op1, const U &op2)
 #endif
+    inline bool operator>(const T &op1, const U &op2)
 {
-    return dispatch_greater_than(op1, op2);
+    return detail::dispatch_greater_than(op1, op2);
 }
 
 /// Greater-than or equal operator.
@@ -2640,12 +2616,12 @@ inline bool operator>(const T &op1, const U &op2)
  * @return \p true if <tt>op1 >= op2</tt>, \p false otherwise.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline bool operator>=(const RationalOpTypes<T> &op1, const T &op2)
+template <typename T, typename U>
+requires RationalOpTypes<T, U>
 #else
 template <typename T, typename U, rational_op_types_enabler<T, U> = 0>
-inline bool operator>=(const T &op1, const U &op2)
 #endif
+    inline bool operator>=(const T &op1, const U &op2)
 {
     return !(op1 < op2);
 }
@@ -2676,8 +2652,8 @@ inline int cmp(const rational<SSize> &op1, const rational<SSize> &op2)
     // - try to see if the limb/bit sizes of nums and dens can tell use immediately which
     //   number is larger,
     // - otherwise, do the two multiplications and compare.
-    const auto v1 = get_mpq_view(op1);
-    const auto v2 = get_mpq_view(op2);
+    const auto v1 = detail::get_mpq_view(op1);
+    const auto v2 = detail::get_mpq_view(op2);
     return ::mpq_cmp(&v1, &v2);
 }
 
@@ -2694,7 +2670,7 @@ inline int cmp(const rational<SSize> &op1, const integer<SSize> &op2)
 {
     // NOTE: mpq_cmp_z() is a macro or a function, depending on the GMP version. Don't
     // call it with "::".
-    const auto v1 = get_mpq_view(op1);
+    const auto v1 = detail::get_mpq_view(op1);
     return mpq_cmp_z(&v1, op2.get_mpz_view());
 }
 
@@ -2715,7 +2691,7 @@ inline int cmp(const integer<SSize> &op1, const rational<SSize> &op2)
     // NOTE: we don't take directly the negative because it's not clear
     // how large the returned value could be. Like this, we prevent any
     // possible integral overflow shenanigans.
-    return -integral_sign(cmp(op2, op1));
+    return -detail::integral_sign(cmp(op2, op1));
 }
 
 /// Sign function.
@@ -2772,7 +2748,7 @@ inline bool is_zero(const rational<SSize> &q)
  *  @{
  */
 
-inline namespace detail
+namespace detail
 {
 
 // binomial() implementation.
@@ -2831,14 +2807,14 @@ inline rational<SSize> rational_binomial_impl(const rational<SSize> &t, const T 
  * the binomial coefficient for \link mppp::integer integer\endlink.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <std::size_t SSize>
-inline rational<SSize> binomial(const rational<SSize> &x, const RationalIntegralInteroperable<SSize> &y)
+template <std::size_t SSize, typename T>
+requires RationalIntegralInteroperable<T, SSize> inline rational<SSize> binomial(const rational<SSize> &x, const T &y)
 #else
 template <std::size_t SSize, typename T, rational_integral_interoperable_enabler<T, SSize> = 0>
 inline rational<SSize> binomial(const rational<SSize> &x, const T &y)
 #endif
 {
-    return rational_binomial_impl(x, y);
+    return detail::rational_binomial_impl(x, y);
 }
 
 /** @} */
@@ -2847,7 +2823,7 @@ inline rational<SSize> binomial(const rational<SSize> &x, const T &y)
  *  @{
  */
 
-inline namespace detail
+namespace detail
 {
 
 // rational base, integral exponent implementation. Assumes exp is non-null.
@@ -2950,14 +2926,14 @@ inline T pow_impl(const T &base, const rational<SSize> &exp)
  * in a handful of special cases).
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline auto pow(const RationalOpTypes<T> &base, const T &exp)
+template <typename T, typename U>
+requires RationalOpTypes<T, U> inline auto pow(const T &base, const U &exp)
 #else
 template <typename T, typename U>
-inline rational_common_t<T, U> pow(const T &base, const U &exp)
+inline detail::rational_common_t<T, U> pow(const T &base, const U &exp)
 #endif
 {
-    return pow_impl(base, exp);
+    return detail::pow_impl(base, exp);
 }
 
 /** @} */
@@ -3006,6 +2982,7 @@ inline std::size_t hash(const rational<SSize> &q)
 }
 
 /** @} */
+
 } // namespace mppp
 
 namespace std

@@ -1,4 +1,4 @@
-// Copyright 2016-2018 Francesco Biscani (bluescarni@gmail.com)
+// Copyright 2016-2019 Francesco Biscani (bluescarni@gmail.com)
 //
 // This file is part of the mp++ library.
 //
@@ -10,11 +10,10 @@
 #define MPPP_DETAIL_GMP_HPP
 
 #include <cassert>
-#include <gmp.h>
 #include <type_traits>
 #include <utility>
 
-#include <mp++/detail/type_traits.hpp>
+#include <gmp.h>
 
 #if __GNU_MP_VERSION < 5
 
@@ -25,11 +24,11 @@
 namespace mppp
 {
 
-inline namespace detail
+namespace detail
 {
 
 // mpz_t is an array of some struct.
-using mpz_struct_t = remove_extent_t<::mpz_t>;
+using mpz_struct_t = std::remove_extent<::mpz_t>::type;
 // Integral types used for allocation size and number of limbs.
 using mpz_alloc_t = decltype(std::declval<mpz_struct_t>()._mp_alloc);
 using mpz_size_t = decltype(std::declval<mpz_struct_t>()._mp_size);
@@ -57,7 +56,7 @@ struct mpz_raii {
 };
 
 // mpq_t is an array of some struct.
-using mpq_struct_t = remove_extent_t<::mpq_t>;
+using mpq_struct_t = std::remove_extent<::mpq_t>::type;
 
 // Simple RAII holder for GMP rationals.
 struct mpq_raii {
@@ -77,7 +76,7 @@ struct mpq_raii {
 };
 
 // mpf_t is an array of some struct.
-using mpf_struct_t = remove_extent_t<::mpf_t>;
+using mpf_struct_t = std::remove_extent<::mpf_t>::type;
 
 // Simple RAII holder for GMP floats.
 struct mpf_raii {
@@ -95,7 +94,7 @@ struct mpf_raii {
     }
     mpf_struct_t m_mpf;
 };
-}
-}
+} // namespace detail
+} // namespace mppp
 
 #endif

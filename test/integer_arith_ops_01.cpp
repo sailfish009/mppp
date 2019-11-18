@@ -1,4 +1,4 @@
-// Copyright 2016-2018 Francesco Biscani (bluescarni@gmail.com)
+// Copyright 2016-2019 Francesco Biscani (bluescarni@gmail.com)
 //
 // This file is part of the mp++ library.
 //
@@ -15,7 +15,6 @@
 #endif
 
 #include <cstddef>
-#include <gmp.h>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -23,14 +22,14 @@
 #include <type_traits>
 #include <utility>
 
+#include <gmp.h>
+
 #include <mp++/config.hpp>
 #include <mp++/detail/type_traits.hpp>
 #include <mp++/integer.hpp>
 
-#include "test_utils.hpp"
-
-#define CATCH_CONFIG_MAIN
 #include "catch.hpp"
+#include "test_utils.hpp"
 
 using namespace mppp;
 using namespace mppp_test;
@@ -47,10 +46,10 @@ template <typename T, typename U>
 using inplace_add_t = decltype(std::declval<T &>() += std::declval<const U &>());
 
 template <typename T, typename U>
-using is_addable = is_detected<add_t, T, U>;
+using is_addable = detail::is_detected<add_t, T, U>;
 
 template <typename T, typename U>
-using is_addable_inplace = is_detected<inplace_add_t, T, U>;
+using is_addable_inplace = detail::is_detected<inplace_add_t, T, U>;
 
 struct add_tester {
     template <typename S>
@@ -97,9 +96,9 @@ struct add_tester {
         REQUIRE((__uint128_t{4} + n1 == 5));
         REQUIRE((n1 + __int128_t{-4} == -3));
         REQUIRE((__int128_t{-4} + n1 == -3));
-        REQUIRE(n1 + nl_max<__uint128_t>() == integer{to_string(nl_max<__uint128_t>())} + 1);
-        REQUIRE(n1 + nl_max<__int128_t>() == integer{to_string(nl_max<__int128_t>())} + 1);
-        REQUIRE(-n1 + nl_min<__int128_t>() == integer{to_string(nl_min<__int128_t>())} - 1);
+        REQUIRE(n1 + detail::nl_max<__uint128_t>() == integer{detail::to_string(detail::nl_max<__uint128_t>())} + 1);
+        REQUIRE(n1 + detail::nl_max<__int128_t>() == integer{detail::to_string(detail::nl_max<__int128_t>())} + 1);
+        REQUIRE(-n1 + detail::nl_min<__int128_t>() == integer{detail::to_string(detail::nl_min<__int128_t>())} - 1);
 #endif
         // In-place add.
         integer retval{1};
@@ -184,7 +183,7 @@ struct add_tester {
         REQUIRE((lex_cast(retval++) == "2"));
         REQUIRE((lex_cast(retval++) == "3"));
         // Couple of tests at the boundaries
-        mpz_raii tmp;
+        detail::mpz_raii tmp;
         retval = integer{GMP_NUMB_MAX};
         ::mpz_set(&tmp.m_mpz, retval.get_mpz_view());
         ++retval;
@@ -232,10 +231,10 @@ template <typename T, typename U>
 using inplace_sub_t = decltype(std::declval<T &>() -= std::declval<const U &>());
 
 template <typename T, typename U>
-using is_subtractable = is_detected<sub_t, T, U>;
+using is_subtractable = detail::is_detected<sub_t, T, U>;
 
 template <typename T, typename U>
-using is_subtractable_inplace = is_detected<inplace_sub_t, T, U>;
+using is_subtractable_inplace = detail::is_detected<inplace_sub_t, T, U>;
 
 struct sub_tester {
     template <typename S>
@@ -281,9 +280,9 @@ struct sub_tester {
         REQUIRE((__uint128_t{4} - n1 == 3));
         REQUIRE((n1 - __int128_t{-4} == 5));
         REQUIRE((__int128_t{-4} - n1 == -5));
-        REQUIRE(-n1 - nl_max<__uint128_t>() == -integer{to_string(nl_max<__uint128_t>())} - 1);
-        REQUIRE(-n1 - nl_max<__int128_t>() == -integer{to_string(nl_max<__int128_t>())} - 1);
-        REQUIRE(-n1 - nl_min<__int128_t>() == -integer{to_string(nl_min<__int128_t>())} - 1);
+        REQUIRE(-n1 - detail::nl_max<__uint128_t>() == -integer{detail::to_string(detail::nl_max<__uint128_t>())} - 1);
+        REQUIRE(-n1 - detail::nl_max<__int128_t>() == -integer{detail::to_string(detail::nl_max<__int128_t>())} - 1);
+        REQUIRE(-n1 - detail::nl_min<__int128_t>() == -integer{detail::to_string(detail::nl_min<__int128_t>())} - 1);
 #endif
         // In-place sub.
         integer retval{1};
@@ -367,7 +366,7 @@ struct sub_tester {
         REQUIRE((lex_cast(retval--) == "-2"));
         REQUIRE((lex_cast(retval--) == "-3"));
         // Couple of tests at the boundaries
-        mpz_raii tmp;
+        detail::mpz_raii tmp;
         retval = integer{GMP_NUMB_MAX};
         retval.neg();
         ::mpz_set(&tmp.m_mpz, retval.get_mpz_view());
@@ -418,10 +417,10 @@ template <typename T, typename U>
 using inplace_mul_t = decltype(std::declval<T &>() *= std::declval<const U &>());
 
 template <typename T, typename U>
-using is_multipliable = is_detected<mul_t, T, U>;
+using is_multipliable = detail::is_detected<mul_t, T, U>;
 
 template <typename T, typename U>
-using is_multipliable_inplace = is_detected<inplace_mul_t, T, U>;
+using is_multipliable_inplace = detail::is_detected<inplace_mul_t, T, U>;
 
 struct mul_tester {
     template <typename S>
@@ -466,9 +465,12 @@ struct mul_tester {
         REQUIRE((__uint128_t{4} * n1 == 4));
         REQUIRE((n1 * __int128_t{-4} == -4));
         REQUIRE((__int128_t{-4} * n1 == -4));
-        REQUIRE(integer{2} * nl_max<__uint128_t>() == 2 * integer{to_string(nl_max<__uint128_t>())});
-        REQUIRE(integer{2} * nl_max<__int128_t>() == 2 * integer{to_string(nl_max<__int128_t>())});
-        REQUIRE(integer{2} * nl_min<__int128_t>() == 2 * integer{to_string(nl_min<__int128_t>())});
+        REQUIRE(integer{2} * detail::nl_max<__uint128_t>()
+                == 2 * integer{detail::to_string(detail::nl_max<__uint128_t>())});
+        REQUIRE(integer{2} * detail::nl_max<__int128_t>()
+                == 2 * integer{detail::to_string(detail::nl_max<__int128_t>())});
+        REQUIRE(integer{2} * detail::nl_min<__int128_t>()
+                == 2 * integer{detail::to_string(detail::nl_min<__int128_t>())});
 #endif
         // In-place mul.
         integer retval{1};

@@ -1,4 +1,4 @@
-// Copyright 2016-2018 Francesco Biscani (bluescarni@gmail.com)
+// Copyright 2016-2019 Francesco Biscani (bluescarni@gmail.com)
 //
 // This file is part of the mp++ library.
 //
@@ -16,33 +16,30 @@
 #define MPPP_VERSION_MINOR @mp++_VERSION_MINOR@
 @MPPP_ENABLE_MPFR@
 @MPPP_ENABLE_QUADMATH@
+@MPPP_STATIC_BUILD@
 // clang-format on
 // End of defines instantiated by CMake.
 
 // Compiler configuration.
 
-// NOTE: check for MSVC first, as clang-cl does define both __clang__ and _MSC_VER,
-// and we want to configure it as MSVC.
-#if defined(_MSC_VER)
+#if defined(__clang__) || defined(__GNUC__) || defined(__INTEL_COMPILER)
 
-// clang-cl supports __builtin_expect().
-#if defined(__clang__)
+// NOTE: GCC, clang (including clang-cl) and the Intel compiler support
+// __builtin_expect() and __restrict.
 #define mppp_likely(x) __builtin_expect(static_cast<bool>(x), 1)
 #define mppp_unlikely(x) __builtin_expect(static_cast<bool>(x), 0)
-#else
+#define MPPP_RESTRICT __restrict
+
+#elif defined(_MSC_VER)
+
+// NOTE: MSVC (without clang-cl) only supports __restrict.
 #define mppp_likely(x) (x)
 #define mppp_unlikely(x) (x)
-#endif
-#define MPPP_RESTRICT __restrict
-
-#elif defined(__clang__) || defined(__GNUC__) || defined(__INTEL_COMPILER)
-
-#define mppp_likely(x) __builtin_expect(static_cast<bool>(x), 1)
-#define mppp_unlikely(x) __builtin_expect(static_cast<bool>(x), 0)
 #define MPPP_RESTRICT __restrict
 
 #else
 
+// Otherwise, disable both __builtin_expect() and __restrict.
 #define mppp_likely(x) (x)
 #define mppp_unlikely(x) (x)
 #define MPPP_RESTRICT
@@ -65,7 +62,7 @@
 // - at least some early versions of the Intel compiler have a buggy implementation. This
 //   came out from testing, but it might be fixed now.
 
-#if (defined(__apple_build_version__) && __clang_major__ < 8) || defined(__MINGW32__) || defined(__INTEL_COMPILER)
+#if (defined(__APPLE__) && __clang_major__ < 8) || defined(__MINGW32__) || defined(__INTEL_COMPILER)
 
 #define MPPP_MAYBE_TLS
 
@@ -81,6 +78,17 @@
 #if defined(__cpp_concepts)
 
 #define MPPP_HAVE_CONCEPTS
+
+// NOTE: GCC < 9 uses the syntax of the concept TS.
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ < 9
+
+#define MPPP_CONCEPT_DECL concept bool
+
+#else
+
+#define MPPP_CONCEPT_DECL concept
+
+#endif
 
 #endif
 
@@ -116,6 +124,21 @@
     && defined(__SIZEOF_INT128__)
 
 #define MPPP_HAVE_GCC_INT128
+
+#endif
+
+// Check if we have std::string_view available.
+// Older compilers might advertise C++17 support
+// without implementing all the necessary library
+// components - this is the case with MSVC 2015
+// and std::string_view.
+#if MPPP_CPLUSPLUS >= 201703L
+
+#if __has_include(<string_view>)
+
+#define MPPP_HAVE_STRING_VIEW
+
+#endif
 
 #endif
 

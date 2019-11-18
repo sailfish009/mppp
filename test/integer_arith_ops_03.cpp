@@ -1,4 +1,4 @@
-// Copyright 2016-2018 Francesco Biscani (bluescarni@gmail.com)
+// Copyright 2016-2019 Francesco Biscani (bluescarni@gmail.com)
 //
 // This file is part of the mp++ library.
 //
@@ -15,7 +15,6 @@
 #endif
 
 #include <cstddef>
-#include <gmp.h>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -23,14 +22,14 @@
 #include <type_traits>
 #include <utility>
 
+#include <gmp.h>
+
 #include <mp++/config.hpp>
 #include <mp++/detail/type_traits.hpp>
 #include <mp++/integer.hpp>
 
-#include "test_utils.hpp"
-
-#define CATCH_CONFIG_MAIN
 #include "catch.hpp"
+#include "test_utils.hpp"
 
 using namespace mppp;
 using namespace mppp_test;
@@ -46,10 +45,10 @@ template <typename T, typename U>
 using inplace_lshift_t = decltype(std::declval<T &>() <<= std::declval<const U &>());
 
 template <typename T, typename U>
-using is_lshiftable = is_detected<lshift_t, T, U>;
+using is_lshiftable = detail::is_detected<lshift_t, T, U>;
 
 template <typename T, typename U>
-using is_lshiftable_inplace = is_detected<inplace_lshift_t, T, U>;
+using is_lshiftable_inplace = detail::is_detected<inplace_lshift_t, T, U>;
 
 template <typename T, typename U>
 using rshift_t = decltype(std::declval<const T &>() >> std::declval<const U &>());
@@ -58,10 +57,10 @@ template <typename T, typename U>
 using inplace_rshift_t = decltype(std::declval<T &>() >>= std::declval<const U &>());
 
 template <typename T, typename U>
-using is_rshiftable = is_detected<rshift_t, T, U>;
+using is_rshiftable = detail::is_detected<rshift_t, T, U>;
 
 template <typename T, typename U>
-using is_rshiftable_inplace = is_detected<inplace_rshift_t, T, U>;
+using is_rshiftable_inplace = detail::is_detected<inplace_rshift_t, T, U>;
 
 struct shift_tester {
     template <typename S>
@@ -121,11 +120,11 @@ struct shift_tester {
         REQUIRE_THROWS_AS(ret <<= __int128_t{-1}, std::overflow_error);
         REQUIRE_THROWS_AS(ret >> __int128_t{-1}, std::overflow_error);
         REQUIRE_THROWS_AS(ret >>= __int128_t{-1}, std::overflow_error);
-        if (nl_max<__uint128_t>() > nl_max<::mp_bitcnt_t>()) {
-            REQUIRE_THROWS_AS(ret << nl_max<__uint128_t>(), std::overflow_error);
-            REQUIRE_THROWS_AS(ret <<= nl_max<__uint128_t>(), std::overflow_error);
-            REQUIRE_THROWS_AS(ret >> nl_max<__uint128_t>(), std::overflow_error);
-            REQUIRE_THROWS_AS(ret >>= nl_max<__uint128_t>(), std::overflow_error);
+        if (detail::nl_max<__uint128_t>() > detail::nl_max<::mp_bitcnt_t>()) {
+            REQUIRE_THROWS_AS(ret << detail::nl_max<__uint128_t>(), std::overflow_error);
+            REQUIRE_THROWS_AS(ret <<= detail::nl_max<__uint128_t>(), std::overflow_error);
+            REQUIRE_THROWS_AS(ret >> detail::nl_max<__uint128_t>(), std::overflow_error);
+            REQUIRE_THROWS_AS(ret >>= detail::nl_max<__uint128_t>(), std::overflow_error);
         }
 #endif
         // Type traits.
@@ -168,10 +167,10 @@ template <typename T, typename U>
 using inplace_mod_t = decltype(std::declval<T &>() <<= std::declval<const U &>());
 
 template <typename T, typename U>
-using is_modable = is_detected<mod_t, T, U>;
+using is_modable = detail::is_detected<mod_t, T, U>;
 
 template <typename T, typename U>
-using is_modable_inplace = is_detected<inplace_mod_t, T, U>;
+using is_modable_inplace = detail::is_detected<inplace_mod_t, T, U>;
 
 struct mod_tester {
     template <typename S>

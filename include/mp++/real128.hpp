@@ -1,4 +1,4 @@
-// Copyright 2016-2018 Francesco Biscani (bluescarni@gmail.com)
+// Copyright 2016-2019 Francesco Biscani (bluescarni@gmail.com)
 //
 // This file is part of the mp++ library.
 //
@@ -21,12 +21,13 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
-#if MPPP_CPLUSPLUS >= 201703L
-#include <string_view>
-#endif
 #include <tuple>
 #include <type_traits>
 #include <vector>
+
+#if defined(MPPP_HAVE_STRING_VIEW)
+#include <string_view>
+#endif
 
 #include <mp++/concepts.hpp>
 #include <mp++/detail/gmp.hpp>
@@ -42,7 +43,7 @@ namespace mppp
 // Fwd declaration.
 class real128;
 
-inline namespace detail
+namespace detail
 {
 
 // Story time!
@@ -100,38 +101,38 @@ using are_real128_mppp_op_types = disjunction<conjunction<std::is_same<T, real12
 
 template <typename T>
 #if defined(MPPP_HAVE_CONCEPTS)
-concept bool Real128CppInteroperable = is_real128_cpp_interoperable<T>::value;
+MPPP_CONCEPT_DECL Real128CppInteroperable = detail::is_real128_cpp_interoperable<T>::value;
 #else
-using real128_cpp_interoperable_enabler = enable_if_t<is_real128_cpp_interoperable<T>::value, int>;
+using real128_cpp_interoperable_enabler = detail::enable_if_t<detail::is_real128_cpp_interoperable<T>::value, int>;
 #endif
 
 template <typename T>
 #if defined(MPPP_HAVE_CONCEPTS)
-concept bool Real128MpppInteroperable = is_real128_mppp_interoperable<T>::value;
+MPPP_CONCEPT_DECL Real128MpppInteroperable = detail::is_real128_mppp_interoperable<T>::value;
 #else
-using real128_mppp_interoperable_enabler = enable_if_t<is_real128_mppp_interoperable<T>::value, int>;
+using real128_mppp_interoperable_enabler = detail::enable_if_t<detail::is_real128_mppp_interoperable<T>::value, int>;
 #endif
 
 template <typename T, typename U>
 #if defined(MPPP_HAVE_CONCEPTS)
-concept bool Real128CppOpTypes = are_real128_cpp_op_types<T, U>::value;
+MPPP_CONCEPT_DECL Real128CppOpTypes = detail::are_real128_cpp_op_types<T, U>::value;
 #else
-using real128_cpp_op_types_enabler = enable_if_t<are_real128_cpp_op_types<T, U>::value, int>;
+using real128_cpp_op_types_enabler = detail::enable_if_t<detail::are_real128_cpp_op_types<T, U>::value, int>;
 #endif
 
 template <typename T, typename U>
 #if defined(MPPP_HAVE_CONCEPTS)
-concept bool Real128MpppOpTypes = are_real128_mppp_op_types<T, U>::value;
+MPPP_CONCEPT_DECL Real128MpppOpTypes = detail::are_real128_mppp_op_types<T, U>::value;
 #else
-using real128_mppp_op_types_enabler = enable_if_t<are_real128_mppp_op_types<T, U>::value, int>;
+using real128_mppp_op_types_enabler = detail::enable_if_t<detail::are_real128_mppp_op_types<T, U>::value, int>;
 #endif
 
 template <typename T, typename U>
 #if defined(MPPP_HAVE_CONCEPTS)
-concept bool Real128OpTypes = Real128CppOpTypes<T, U> || Real128MpppOpTypes<T, U>;
+MPPP_CONCEPT_DECL Real128OpTypes = Real128CppOpTypes<T, U> || Real128MpppOpTypes<T, U>;
 #else
-using real128_op_types_enabler
-    = enable_if_t<disjunction<are_real128_cpp_op_types<T, U>, are_real128_mppp_op_types<T, U>>::value, int>;
+using real128_op_types_enabler = detail::enable_if_t<
+    detail::disjunction<detail::are_real128_cpp_op_types<T, U>, detail::are_real128_mppp_op_types<T, U>>::value, int>;
 #endif
 
 // For the future:
@@ -141,6 +142,8 @@ using real128_op_types_enabler
 // - the constructor from integer *may* be implemented in a faster way by reading directly the hi/lo parts
 //   and writing them to the ieee union (instead right now we are using __float128 arithmetics and quadmath
 //   functions). Make sure to benchmark first though...
+// - initial code for stream formatting at 687b86d9380a534048f62aac3815c31b094e52d2. The problem to be
+//   solved is the segfault in MinGW.
 
 /// Quadruple-precision floating-point class.
 /**
@@ -267,12 +270,11 @@ public:
      * @param x the value that will be used for initialisation.
      */
 #if defined(MPPP_HAVE_CONCEPTS)
-    constexpr explicit real128(Real128CppInteroperable x)
+    template <Real128CppInteroperable T>
 #else
     template <typename T, real128_cpp_interoperable_enabler<T> = 0>
-    constexpr explicit real128(T x)
 #endif
-        : m_value(x)
+    constexpr explicit real128(T x) : m_value(x)
     {
     }
 
@@ -303,7 +305,7 @@ private:
         // to fill up the significand of m_value.
         while (ls && read_bits < sig_digits) {
             // Number of bits to be read from the current limb: GMP_NUMB_BITS or less.
-            const unsigned rbits = c_min(unsigned(GMP_NUMB_BITS), sig_digits - read_bits);
+            const unsigned rbits = detail::c_min(unsigned(GMP_NUMB_BITS), sig_digits - read_bits);
             // Shift m_value by rbits.
             // NOTE: safe to cast to int here, as rbits is not greater than GMP_NUMB_BITS which in turn fits in int.
             m_value = ::scalbnq(m_value, static_cast<int>(rbits));
@@ -319,7 +321,7 @@ private:
             // We did not read from n all its bits. This means that n has more bits than the quad-precision
             // significand, and thus we need to multiply this by 2**unread_bits.
             // Use the long variant of scalbn() to maximise the range.
-            m_value = ::scalblnq(m_value, safe_cast<long>(n_bits - read_bits));
+            m_value = ::scalblnq(m_value, detail::safe_cast<long>(n_bits - read_bits));
         }
         // Fix the sign as needed.
         if (n_sgn == -1) {
@@ -340,16 +342,16 @@ private:
             // do the conversion, and then recover the shifted bits in the float128.
             MPPP_MAYBE_TLS integer<SSize> n;
             const auto shift = n_bits - sig_digits;
-            tdiv_q_2exp(n, q.get_num(), safe_cast<::mp_bitcnt_t>(shift));
+            tdiv_q_2exp(n, q.get_num(), detail::safe_cast<::mp_bitcnt_t>(shift));
             m_value = real128{n}.m_value / real128{q.get_den()}.m_value;
-            m_value = ::scalblnq(m_value, safe_cast<long>(shift));
+            m_value = ::scalblnq(m_value, detail::safe_cast<long>(shift));
         } else if (n_bits <= sig_digits && d_bits > sig_digits) {
             // The opposite of above.
             MPPP_MAYBE_TLS integer<SSize> d;
             const auto shift = d_bits - sig_digits;
-            tdiv_q_2exp(d, q.get_den(), safe_cast<::mp_bitcnt_t>(shift));
+            tdiv_q_2exp(d, q.get_den(), detail::safe_cast<::mp_bitcnt_t>(shift));
             m_value = real128{q.get_num()}.m_value / real128{d}.m_value;
-            m_value = ::scalblnq(m_value, negate_unsigned<long>(shift));
+            m_value = ::scalblnq(m_value, detail::negate_unsigned<long>(shift));
         } else {
             // Both num and den have more bits than quad's significand. We will downshift
             // both until they have 113 bits, do the division, and then recover the shifted bits.
@@ -357,13 +359,13 @@ private:
             MPPP_MAYBE_TLS integer<SSize> d;
             const auto n_shift = n_bits - sig_digits;
             const auto d_shift = d_bits - sig_digits;
-            tdiv_q_2exp(n, q.get_num(), safe_cast<::mp_bitcnt_t>(n_shift));
-            tdiv_q_2exp(d, q.get_den(), safe_cast<::mp_bitcnt_t>(d_shift));
+            tdiv_q_2exp(n, q.get_num(), detail::safe_cast<::mp_bitcnt_t>(n_shift));
+            tdiv_q_2exp(d, q.get_den(), detail::safe_cast<::mp_bitcnt_t>(d_shift));
             m_value = real128{n}.m_value / real128{d}.m_value;
             if (n_shift >= d_shift) {
-                m_value = ::scalblnq(m_value, safe_cast<long>(n_shift - d_shift));
+                m_value = ::scalblnq(m_value, detail::safe_cast<long>(n_shift - d_shift));
             } else {
-                m_value = ::scalblnq(m_value, negate_unsigned<long>(d_shift - n_shift));
+                m_value = ::scalblnq(m_value, detail::negate_unsigned<long>(d_shift - n_shift));
             }
         }
     }
@@ -381,11 +383,11 @@ public:
      * @throws std::overflow_error if an overflow occurs during initialisation.
      */
 #if defined(MPPP_HAVE_CONCEPTS)
-    explicit real128(const Real128MpppInteroperable &x)
+    template <Real128MpppInteroperable T>
 #else
     template <typename T, real128_mppp_interoperable_enabler<T> = 0>
-    explicit real128(const T &x)
 #endif
+    explicit real128(const T &x)
     {
         dispatch_mppp_construction(x);
     }
@@ -394,9 +396,9 @@ private:
     // A tag to call private ctors.
     struct ptag {
     };
-    explicit real128(const ptag &, const char *s) : m_value(str_to_float128(s)) {}
+    explicit real128(const ptag &, const char *s) : m_value(detail::str_to_float128(s)) {}
     explicit real128(const ptag &, const std::string &s) : real128(s.c_str()) {}
-#if MPPP_CPLUSPLUS >= 201703L
+#if defined(MPPP_HAVE_STRING_VIEW)
     explicit real128(const ptag &, const std::string_view &s) : real128(s.data(), s.data() + s.size()) {}
 #endif
 public:
@@ -446,7 +448,7 @@ public:
         MPPP_MAYBE_TLS std::vector<char> buffer;
         buffer.assign(begin, end);
         buffer.emplace_back('\0');
-        m_value = str_to_float128(buffer.data());
+        m_value = detail::str_to_float128(buffer.data());
     }
     /// Trivial copy assignment operator.
     /**
@@ -480,24 +482,24 @@ public:
         m_value = x;
         return *this;
     }
-/// Assignment from interoperable C++ types.
-/**
- * \rststar
- * .. note::
- *
- *   This operator is marked as ``constexpr`` only if at least C++14 is being used.
- * \endrststar
- *
- * @param x the assignment argument.
- *
- * @return a reference to \p this.
- */
+    /// Assignment from interoperable C++ types.
+    /**
+     * \rststar
+     * .. note::
+     *
+     *   This operator is marked as ``constexpr`` only if at least C++14 is being used.
+     * \endrststar
+     *
+     * @param x the assignment argument.
+     *
+     * @return a reference to \p this.
+     */
 #if defined(MPPP_HAVE_CONCEPTS)
-    MPPP_CONSTEXPR_14 real128 &operator=(const Real128CppInteroperable &x)
+    template <Real128CppInteroperable T>
 #else
     template <typename T, real128_cpp_interoperable_enabler<T> = 0>
-    MPPP_CONSTEXPR_14 real128 &operator=(const T &x)
 #endif
+    MPPP_CONSTEXPR_14 real128 &operator=(const T &x)
     {
         m_value = x;
         return *this;
@@ -523,11 +525,11 @@ public:
      * ``x``.
      */
 #if defined(MPPP_HAVE_CONCEPTS)
-    real128 &operator=(const Real128MpppInteroperable &x)
+    template <Real128MpppInteroperable T>
 #else
     template <typename T, real128_mppp_interoperable_enabler<T> = 0>
-    real128 &operator=(const T &x)
 #endif
+    real128 &operator=(const T &x)
     {
         return *this = real128{x};
     }
@@ -597,7 +599,7 @@ private:
     bool mppp_conversion(integer<SSize> &rop) const
     {
         // Build the union and assign the value.
-        ieee_float128 ief;
+        detail::ieee_float128 ief;
         ief.value = m_value;
         if (mppp_unlikely(ief.i_eee.exponent == 32767u)) {
             // Inf or nan, not representable by integer.
@@ -652,7 +654,7 @@ private:
     bool mppp_conversion(rational<SSize> &rop) const
     {
         // Build the union and assign the value.
-        ieee_float128 ief;
+        detail::ieee_float128 ief;
         ief.value = m_value;
         if (mppp_unlikely(ief.i_eee.exponent == 32767u)) {
             // Inf or nan, not representable by rational.
@@ -725,7 +727,7 @@ public:
         T retval;
         if (mppp_unlikely(!mppp_conversion(retval))) {
             throw std::domain_error(std::string{"Cannot convert a non-finite real128 to "}
-                                    + (is_integer<T>::value ? "an integer" : "a rational"));
+                                    + (detail::is_integer<T>::value ? "an integer" : "a rational"));
         }
         return retval;
     }
@@ -803,7 +805,7 @@ public:
     std::string to_string() const
     {
         std::ostringstream oss;
-        float128_stream(oss, m_value);
+        detail::float128_stream(oss, m_value);
         return oss.str();
     }
     /// Get the IEEE representation of the value.
@@ -825,7 +827,7 @@ public:
      */
     std::tuple<std::uint_least8_t, std::uint_least16_t, std::uint_least64_t, std::uint_least64_t> get_ieee() const
     {
-        ieee_float128 ie;
+        detail::ieee_float128 ie;
         ie.value = m_value;
         return std::make_tuple(std::uint_least8_t(ie.i_eee.negative), std::uint_least16_t(ie.i_eee.exponent),
                                std::uint_least64_t(ie.i_eee.mant_high), std::uint_least64_t(ie.i_eee.mant_low));
@@ -1156,11 +1158,11 @@ static_assert(std::is_standard_layout<real128>::value, "real128 is not a standar
  * @return always ``true``.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-inline MPPP_CONSTEXPR_14 bool get(Real128CppInteroperable &rop, const real128 &x)
+template <Real128CppInteroperable T>
 #else
 template <typename T, real128_cpp_interoperable_enabler<T> = 0>
-inline MPPP_CONSTEXPR_14 bool get(T &rop, const real128 &x)
 #endif
+inline MPPP_CONSTEXPR_14 bool get(T &rop, const real128 &x)
 {
     return x.get(rop);
 }
@@ -1182,11 +1184,11 @@ inline MPPP_CONSTEXPR_14 bool get(T &rop, const real128 &x)
  * does not represent a finite value.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-inline bool get(Real128MpppInteroperable &rop, const real128 &x)
+template <Real128MpppInteroperable T>
 #else
 template <typename T, real128_mppp_interoperable_enabler<T> = 0>
-inline bool get(T &rop, const real128 &x)
 #endif
+inline bool get(T &rop, const real128 &x)
 {
     return x.get(rop);
 }
@@ -1302,29 +1304,8 @@ inline real128 scalbln(const real128 &x, long n)
  */
 inline std::ostream &operator<<(std::ostream &os, const real128 &x)
 {
-    float128_stream(os, x.m_value);
+    detail::float128_stream(os, x.m_value);
     return os;
-}
-
-/// Input stream operator.
-/**
- * \rststar
- * This operator is equivalent to extracting a line from the stream and assigning it to ``x``.
- * \endrststar
- *
- * @param is the input stream.
- * @param x the \link mppp::real128 real128\endlink to which the string extracted from the stream will be assigned.
- *
- * @return a reference to \p is.
- *
- * @throws unspecified any exception thrown by \link mppp::real128 real128\endlink's assignment operator from string.
- */
-inline std::istream &operator>>(std::istream &is, real128 &x)
-{
-    MPPP_MAYBE_TLS std::string tmp_str;
-    std::getline(is, tmp_str);
-    x = tmp_str;
-    return is;
 }
 
 /** @} */
@@ -1498,7 +1479,7 @@ inline real128 hypot(const real128 &x, const real128 &y)
  *  @{
  */
 
-inline namespace detail
+namespace detail
 {
 
 inline real128 dispatch_pow(const real128 &x, const real128 &y)
@@ -1546,14 +1527,14 @@ inline real128 dispatch_pow(const T &x, const real128 &y)
  * @return \f$ x^y \f$.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline real128 pow(const Real128OpTypes<T> &x, const T &y)
+template <typename T, typename U>
+requires Real128OpTypes<T, U>
 #else
 template <typename T, typename U, real128_op_types_enabler<T, U> = 0>
-inline real128 pow(const T &x, const U &y)
 #endif
+    inline real128 pow(const T &x, const U &y)
 {
-    return dispatch_pow(x, y);
+    return detail::dispatch_pow(x, y);
 }
 
 /** @} */
@@ -1785,6 +1766,12 @@ inline real128 erf(real128 x)
 
 /** @} */
 
+// Next real128 from 'from' to 'to'.
+inline real128 nextafter(const real128 &from, const real128 &to)
+{
+    return real128{::nextafterq(from.m_value, to.m_value)};
+}
+
 /** @defgroup real128_operators real128_operators
  *  @{
  */
@@ -1800,7 +1787,7 @@ constexpr real128 operator+(real128 x)
     return x;
 }
 
-inline namespace detail
+namespace detail
 {
 
 constexpr real128 dispatch_add(const real128 &x, const real128 &y)
@@ -1829,17 +1816,17 @@ constexpr real128 dispatch_add(const T &x, const real128 &y)
  * @return \f$ x + y \f$.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-constexpr real128 operator+(const Real128CppOpTypes<T> &x, const T &y)
+template <typename T, typename U>
+requires Real128CppOpTypes<T, U>
 #else
 template <typename T, typename U, real128_cpp_op_types_enabler<T, U> = 0>
-constexpr real128 operator+(const T &x, const U &y)
 #endif
+    constexpr real128 operator+(const T &x, const U &y)
 {
-    return dispatch_add(x, y);
+    return detail::dispatch_add(x, y);
 }
 
-inline namespace detail
+namespace detail
 {
 
 template <typename T, enable_if_t<is_real128_mppp_interoperable<T>::value, int> = 0>
@@ -1866,17 +1853,17 @@ inline real128 dispatch_add(const T &x, const real128 &y)
  * from the mp++ type.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline real128 operator+(const Real128MpppOpTypes<T> &x, const T &y)
+template <typename T, typename U>
+requires Real128MpppOpTypes<T, U>
 #else
 template <typename T, typename U, real128_mppp_op_types_enabler<T, U> = 0>
-inline real128 operator+(const T &x, const U &y)
 #endif
+    inline real128 operator+(const T &x, const U &y)
 {
-    return dispatch_add(x, y);
+    return detail::dispatch_add(x, y);
 }
 
-inline namespace detail
+namespace detail
 {
 
 // NOTE: we need the MPPP_CONSTEXPR_14 construct in the implementation detail as well,
@@ -1913,18 +1900,18 @@ inline MPPP_CONSTEXPR_14 void dispatch_in_place_add(T &x, const real128 &y)
  * @return a reference to \p x, after it has been incremented by \p y.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline MPPP_CONSTEXPR_14 auto &operator+=(Real128CppOpTypes<T> &x, const T &y)
+template <typename T, typename U>
+requires Real128CppOpTypes<T, U>
 #else
 template <typename T, typename U, real128_cpp_op_types_enabler<T, U> = 0>
-inline MPPP_CONSTEXPR_14 T &operator+=(T &x, const U &y)
 #endif
+    inline MPPP_CONSTEXPR_14 T &operator+=(T &x, const U &y)
 {
-    dispatch_in_place_add(x, y);
+    detail::dispatch_in_place_add(x, y);
     return x;
 }
 
-inline namespace detail
+namespace detail
 {
 
 template <typename T, enable_if_t<is_real128_mppp_interoperable<T>::value, int> = 0>
@@ -1951,14 +1938,14 @@ inline void dispatch_in_place_add(T &x, const real128 &y)
  * of \link mppp::real128 real128\endlink to the mp++ type.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline auto &operator+=(Real128MpppOpTypes<T> &x, const T &y)
+template <typename T, typename U>
+requires Real128MpppOpTypes<T, U>
 #else
 template <typename T, typename U, real128_mppp_op_types_enabler<T, U> = 0>
-inline T &operator+=(T &x, const U &y)
 #endif
+    inline T &operator+=(T &x, const U &y)
 {
-    dispatch_in_place_add(x, y);
+    detail::dispatch_in_place_add(x, y);
     return x;
 }
 
@@ -1978,7 +1965,7 @@ inline T &operator+=(T &x, const U &y)
  */
 inline MPPP_CONSTEXPR_14 real128 &operator++(real128 &x)
 {
-    ++x.m_value;
+    x.m_value += 1;
     return x;
 }
 
@@ -2014,7 +2001,7 @@ constexpr real128 operator-(const real128 &x)
     return real128{-x.m_value};
 }
 
-inline namespace detail
+namespace detail
 {
 
 constexpr real128 dispatch_sub(const real128 &x, const real128 &y)
@@ -2043,17 +2030,17 @@ constexpr real128 dispatch_sub(const T &x, const real128 &y)
  * @return \f$ x - y \f$.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-constexpr real128 operator-(const Real128CppOpTypes<T> &x, const T &y)
+template <typename T, typename U>
+requires Real128CppOpTypes<T, U>
 #else
 template <typename T, typename U, real128_cpp_op_types_enabler<T, U> = 0>
-constexpr real128 operator-(const T &x, const U &y)
 #endif
+    constexpr real128 operator-(const T &x, const U &y)
 {
-    return dispatch_sub(x, y);
+    return detail::dispatch_sub(x, y);
 }
 
-inline namespace detail
+namespace detail
 {
 
 template <typename T, enable_if_t<is_real128_mppp_interoperable<T>::value, int> = 0>
@@ -2080,17 +2067,17 @@ inline real128 dispatch_sub(const T &x, const real128 &y)
  * from the mp++ type.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline real128 operator-(const Real128MpppOpTypes<T> &x, const T &y)
+template <typename T, typename U>
+requires Real128MpppOpTypes<T, U>
 #else
 template <typename T, typename U, real128_mppp_op_types_enabler<T, U> = 0>
-inline real128 operator-(const T &x, const U &y)
 #endif
+    inline real128 operator-(const T &x, const U &y)
 {
-    return dispatch_sub(x, y);
+    return detail::dispatch_sub(x, y);
 }
 
-inline namespace detail
+namespace detail
 {
 
 inline MPPP_CONSTEXPR_14 void dispatch_in_place_sub(real128 &x, const real128 &y)
@@ -2125,18 +2112,18 @@ inline MPPP_CONSTEXPR_14 void dispatch_in_place_sub(T &x, const real128 &y)
  * @return a reference to \p x, after it has been decremented by \p y.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline MPPP_CONSTEXPR_14 auto &operator-=(Real128CppOpTypes<T> &x, const T &y)
+template <typename T, typename U>
+requires Real128CppOpTypes<T, U>
 #else
 template <typename T, typename U, real128_cpp_op_types_enabler<T, U> = 0>
-inline MPPP_CONSTEXPR_14 T &operator-=(T &x, const U &y)
 #endif
+    inline MPPP_CONSTEXPR_14 T &operator-=(T &x, const U &y)
 {
-    dispatch_in_place_sub(x, y);
+    detail::dispatch_in_place_sub(x, y);
     return x;
 }
 
-inline namespace detail
+namespace detail
 {
 
 template <typename T, enable_if_t<is_real128_mppp_interoperable<T>::value, int> = 0>
@@ -2163,14 +2150,14 @@ inline void dispatch_in_place_sub(T &x, const real128 &y)
  * of \link mppp::real128 real128\endlink to the mp++ type.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline auto &operator-=(Real128MpppOpTypes<T> &x, const T &y)
+template <typename T, typename U>
+requires Real128MpppOpTypes<T, U>
 #else
 template <typename T, typename U, real128_mppp_op_types_enabler<T, U> = 0>
-inline T &operator-=(T &x, const U &y)
 #endif
+    inline T &operator-=(T &x, const U &y)
 {
-    dispatch_in_place_sub(x, y);
+    detail::dispatch_in_place_sub(x, y);
     return x;
 }
 
@@ -2190,7 +2177,7 @@ inline T &operator-=(T &x, const U &y)
  */
 inline MPPP_CONSTEXPR_14 real128 &operator--(real128 &x)
 {
-    --x.m_value;
+    x.m_value -= 1;
     return x;
 }
 
@@ -2215,7 +2202,7 @@ inline MPPP_CONSTEXPR_14 real128 operator--(real128 &x, int)
     return retval;
 }
 
-inline namespace detail
+namespace detail
 {
 
 constexpr real128 dispatch_mul(const real128 &x, const real128 &y)
@@ -2244,17 +2231,17 @@ constexpr real128 dispatch_mul(const T &x, const real128 &y)
  * @return \f$ x \times y \f$.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-constexpr real128 operator*(const Real128CppOpTypes<T> &x, const T &y)
+template <typename T, typename U>
+requires Real128CppOpTypes<T, U>
 #else
 template <typename T, typename U, real128_cpp_op_types_enabler<T, U> = 0>
-constexpr real128 operator*(const T &x, const U &y)
 #endif
+    constexpr real128 operator*(const T &x, const U &y)
 {
-    return dispatch_mul(x, y);
+    return detail::dispatch_mul(x, y);
 }
 
-inline namespace detail
+namespace detail
 {
 
 template <typename T, enable_if_t<is_real128_mppp_interoperable<T>::value, int> = 0>
@@ -2281,17 +2268,17 @@ inline real128 dispatch_mul(const T &x, const real128 &y)
  * from the mp++ type.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline real128 operator*(const Real128MpppOpTypes<T> &x, const T &y)
+template <typename T, typename U>
+requires Real128MpppOpTypes<T, U>
 #else
 template <typename T, typename U, real128_mppp_op_types_enabler<T, U> = 0>
-inline real128 operator*(const T &x, const U &y)
 #endif
+    inline real128 operator*(const T &x, const U &y)
 {
-    return dispatch_mul(x, y);
+    return detail::dispatch_mul(x, y);
 }
 
-inline namespace detail
+namespace detail
 {
 
 inline MPPP_CONSTEXPR_14 void dispatch_in_place_mul(real128 &x, const real128 &y)
@@ -2326,18 +2313,18 @@ inline MPPP_CONSTEXPR_14 void dispatch_in_place_mul(T &x, const real128 &y)
  * @return a reference to \p x, after it has been multiplied by \p y.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline MPPP_CONSTEXPR_14 auto &operator*=(Real128CppOpTypes<T> &x, const T &y)
+template <typename T, typename U>
+requires Real128CppOpTypes<T, U>
 #else
 template <typename T, typename U, real128_cpp_op_types_enabler<T, U> = 0>
-inline MPPP_CONSTEXPR_14 T &operator*=(T &x, const U &y)
 #endif
+    inline MPPP_CONSTEXPR_14 T &operator*=(T &x, const U &y)
 {
-    dispatch_in_place_mul(x, y);
+    detail::dispatch_in_place_mul(x, y);
     return x;
 }
 
-inline namespace detail
+namespace detail
 {
 
 template <typename T, enable_if_t<is_real128_mppp_interoperable<T>::value, int> = 0>
@@ -2364,18 +2351,18 @@ inline void dispatch_in_place_mul(T &x, const real128 &y)
  * of \link mppp::real128 real128\endlink to the mp++ type.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline auto &operator*=(Real128MpppOpTypes<T> &x, const T &y)
+template <typename T, typename U>
+requires Real128MpppOpTypes<T, U>
 #else
 template <typename T, typename U, real128_mppp_op_types_enabler<T, U> = 0>
-inline T &operator*=(T &x, const U &y)
 #endif
+    inline T &operator*=(T &x, const U &y)
 {
-    dispatch_in_place_mul(x, y);
+    detail::dispatch_in_place_mul(x, y);
     return x;
 }
 
-inline namespace detail
+namespace detail
 {
 
 constexpr real128 dispatch_div(const real128 &x, const real128 &y)
@@ -2404,17 +2391,17 @@ constexpr real128 dispatch_div(const T &x, const real128 &y)
  * @return \f$ x / y \f$.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-constexpr real128 operator/(const Real128CppOpTypes<T> &x, const T &y)
+template <typename T, typename U>
+requires Real128CppOpTypes<T, U>
 #else
 template <typename T, typename U, real128_cpp_op_types_enabler<T, U> = 0>
-constexpr real128 operator/(const T &x, const U &y)
 #endif
+    constexpr real128 operator/(const T &x, const U &y)
 {
-    return dispatch_div(x, y);
+    return detail::dispatch_div(x, y);
 }
 
-inline namespace detail
+namespace detail
 {
 
 template <typename T, enable_if_t<is_real128_mppp_interoperable<T>::value, int> = 0>
@@ -2441,17 +2428,17 @@ inline real128 dispatch_div(const T &x, const real128 &y)
  * from the mp++ type.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline real128 operator/(const Real128MpppOpTypes<T> &x, const T &y)
+template <typename T, typename U>
+requires Real128MpppOpTypes<T, U>
 #else
 template <typename T, typename U, real128_mppp_op_types_enabler<T, U> = 0>
-inline real128 operator/(const T &x, const U &y)
 #endif
+    inline real128 operator/(const T &x, const U &y)
 {
-    return dispatch_div(x, y);
+    return detail::dispatch_div(x, y);
 }
 
-inline namespace detail
+namespace detail
 {
 
 inline MPPP_CONSTEXPR_14 void dispatch_in_place_div(real128 &x, const real128 &y)
@@ -2486,18 +2473,18 @@ inline MPPP_CONSTEXPR_14 void dispatch_in_place_div(T &x, const real128 &y)
  * @return a reference to \p x, after it has been divided by \p y.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline MPPP_CONSTEXPR_14 auto &operator/=(Real128CppOpTypes<T> &x, const T &y)
+template <typename T, typename U>
+requires Real128CppOpTypes<T, U>
 #else
 template <typename T, typename U, real128_cpp_op_types_enabler<T, U> = 0>
-inline MPPP_CONSTEXPR_14 T &operator/=(T &x, const U &y)
 #endif
+    inline MPPP_CONSTEXPR_14 T &operator/=(T &x, const U &y)
 {
-    dispatch_in_place_div(x, y);
+    detail::dispatch_in_place_div(x, y);
     return x;
 }
 
-inline namespace detail
+namespace detail
 {
 
 template <typename T, enable_if_t<is_real128_mppp_interoperable<T>::value, int> = 0>
@@ -2524,18 +2511,18 @@ inline void dispatch_in_place_div(T &x, const real128 &y)
  * of \link mppp::real128 real128\endlink to the mp++ type.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline auto &operator/=(Real128MpppOpTypes<T> &x, const T &y)
+template <typename T, typename U>
+requires Real128MpppOpTypes<T, U>
 #else
 template <typename T, typename U, real128_mppp_op_types_enabler<T, U> = 0>
-inline T &operator/=(T &x, const U &y)
 #endif
+    inline T &operator/=(T &x, const U &y)
 {
-    dispatch_in_place_div(x, y);
+    detail::dispatch_in_place_div(x, y);
     return x;
 }
 
-inline namespace detail
+namespace detail
 {
 
 constexpr bool dispatch_eq(const real128 &x, const real128 &y)
@@ -2573,17 +2560,17 @@ constexpr bool dispatch_eq(const T &x, const real128 &y)
  * @return \p true if \f$ x = y \f$, \p false otherwise.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-constexpr bool operator==(const Real128CppOpTypes<T> &x, const T &y)
+template <typename T, typename U>
+requires Real128CppOpTypes<T, U>
 #else
 template <typename T, typename U, real128_cpp_op_types_enabler<T, U> = 0>
-constexpr bool operator==(const T &x, const U &y)
 #endif
+    constexpr bool operator==(const T &x, const U &y)
 {
-    return dispatch_eq(x, y);
+    return detail::dispatch_eq(x, y);
 }
 
-inline namespace detail
+namespace detail
 {
 
 template <typename T, enable_if_t<is_real128_mppp_interoperable<T>::value, int> = 0>
@@ -2620,14 +2607,14 @@ inline bool dispatch_eq(const T &x, const real128 &y)
  * from the mp++ type.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline bool operator==(const Real128MpppOpTypes<T> &x, const T &y)
+template <typename T, typename U>
+requires Real128MpppOpTypes<T, U>
 #else
 template <typename T, typename U, real128_mppp_op_types_enabler<T, U> = 0>
-inline bool operator==(const T &x, const U &y)
 #endif
+    inline bool operator==(const T &x, const U &y)
 {
-    return dispatch_eq(x, y);
+    return detail::dispatch_eq(x, y);
 }
 
 /// Inequality operator involving \link mppp::real128 real128\endlink and C++ types.
@@ -2647,12 +2634,12 @@ inline bool operator==(const T &x, const U &y)
  * @return \p true if \f$ x = y \f$, \p false otherwise.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-constexpr bool operator!=(const Real128CppOpTypes<T> &x, const T &y)
+template <typename T, typename U>
+requires Real128CppOpTypes<T, U>
 #else
 template <typename T, typename U, real128_cpp_op_types_enabler<T, U> = 0>
-constexpr bool operator!=(const T &x, const U &y)
 #endif
+    constexpr bool operator!=(const T &x, const U &y)
 {
     return !(x == y);
 }
@@ -2678,17 +2665,17 @@ constexpr bool operator!=(const T &x, const U &y)
  * from the mp++ type.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline bool operator!=(const Real128MpppOpTypes<T> &x, const T &y)
+template <typename T, typename U>
+requires Real128MpppOpTypes<T, U>
 #else
 template <typename T, typename U, real128_mppp_op_types_enabler<T, U> = 0>
-inline bool operator!=(const T &x, const U &y)
 #endif
+    inline bool operator!=(const T &x, const U &y)
 {
     return !(x == y);
 }
 
-inline namespace detail
+namespace detail
 {
 
 constexpr bool dispatch_lt(const real128 &x, const real128 &y)
@@ -2727,17 +2714,17 @@ constexpr bool dispatch_lt(const T &x, const real128 &y)
  * @return \p true if \f$ x < y \f$, \p false otherwise.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-constexpr bool operator<(const Real128CppOpTypes<T> &x, const T &y)
+template <typename T, typename U>
+requires Real128CppOpTypes<T, U>
 #else
 template <typename T, typename U, real128_cpp_op_types_enabler<T, U> = 0>
-constexpr bool operator<(const T &x, const U &y)
 #endif
+    constexpr bool operator<(const T &x, const U &y)
 {
-    return dispatch_lt(x, y);
+    return detail::dispatch_lt(x, y);
 }
 
-inline namespace detail
+namespace detail
 {
 template <typename T, enable_if_t<is_real128_mppp_interoperable<T>::value, int> = 0>
 inline bool dispatch_lt(const real128 &x, const T &y)
@@ -2774,17 +2761,17 @@ inline bool dispatch_lt(const T &x, const real128 &y)
  * from the mp++ type.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline bool operator<(const Real128MpppOpTypes<T> &x, const T &y)
+template <typename T, typename U>
+requires Real128MpppOpTypes<T, U>
 #else
 template <typename T, typename U, real128_mppp_op_types_enabler<T, U> = 0>
-inline bool operator<(const T &x, const U &y)
 #endif
+    inline bool operator<(const T &x, const U &y)
 {
-    return dispatch_lt(x, y);
+    return detail::dispatch_lt(x, y);
 }
 
-inline namespace detail
+namespace detail
 {
 
 constexpr bool dispatch_lte(const real128 &x, const real128 &y)
@@ -2821,17 +2808,17 @@ constexpr bool dispatch_lte(const T &x, const real128 &y)
  * @return \p true if \f$ x \leq y \f$, \p false otherwise.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-constexpr bool operator<=(const Real128CppOpTypes<T> &x, const T &y)
+template <typename T, typename U>
+requires Real128CppOpTypes<T, U>
 #else
 template <typename T, typename U, real128_cpp_op_types_enabler<T, U> = 0>
-constexpr bool operator<=(const T &x, const U &y)
 #endif
+    constexpr bool operator<=(const T &x, const U &y)
 {
-    return dispatch_lte(x, y);
+    return detail::dispatch_lte(x, y);
 }
 
-inline namespace detail
+namespace detail
 {
 template <typename T, enable_if_t<is_real128_mppp_interoperable<T>::value, int> = 0>
 inline bool dispatch_lte(const real128 &x, const T &y)
@@ -2866,17 +2853,17 @@ inline bool dispatch_lte(const T &x, const real128 &y)
  * from the mp++ type.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline bool operator<=(const Real128MpppOpTypes<T> &x, const T &y)
+template <typename T, typename U>
+requires Real128MpppOpTypes<T, U>
 #else
 template <typename T, typename U, real128_mppp_op_types_enabler<T, U> = 0>
-inline bool operator<=(const T &x, const U &y)
 #endif
+    inline bool operator<=(const T &x, const U &y)
 {
-    return dispatch_lte(x, y);
+    return detail::dispatch_lte(x, y);
 }
 
-inline namespace detail
+namespace detail
 {
 
 constexpr bool dispatch_gt(const real128 &x, const real128 &y)
@@ -2915,17 +2902,17 @@ constexpr bool dispatch_gt(const T &x, const real128 &y)
  * @return \p true if \f$ x > y \f$, \p false otherwise.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-constexpr bool operator>(const Real128CppOpTypes<T> &x, const T &y)
+template <typename T, typename U>
+requires Real128CppOpTypes<T, U>
 #else
 template <typename T, typename U, real128_cpp_op_types_enabler<T, U> = 0>
-constexpr bool operator>(const T &x, const U &y)
 #endif
+    constexpr bool operator>(const T &x, const U &y)
 {
-    return dispatch_gt(x, y);
+    return detail::dispatch_gt(x, y);
 }
 
-inline namespace detail
+namespace detail
 {
 template <typename T, enable_if_t<is_real128_mppp_interoperable<T>::value, int> = 0>
 inline bool dispatch_gt(const real128 &x, const T &y)
@@ -2962,17 +2949,17 @@ inline bool dispatch_gt(const T &x, const real128 &y)
  * from the mp++ type.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline bool operator>(const Real128MpppOpTypes<T> &x, const T &y)
+template <typename T, typename U>
+requires Real128MpppOpTypes<T, U>
 #else
 template <typename T, typename U, real128_mppp_op_types_enabler<T, U> = 0>
-inline bool operator>(const T &x, const U &y)
 #endif
+    inline bool operator>(const T &x, const U &y)
 {
-    return dispatch_gt(x, y);
+    return detail::dispatch_gt(x, y);
 }
 
-inline namespace detail
+namespace detail
 {
 
 constexpr bool dispatch_gte(const real128 &x, const real128 &y)
@@ -3009,17 +2996,17 @@ constexpr bool dispatch_gte(const T &x, const real128 &y)
  * @return \p true if \f$ x \geq y \f$, \p false otherwise.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-constexpr bool operator>=(const Real128CppOpTypes<T> &x, const T &y)
+template <typename T, typename U>
+requires Real128CppOpTypes<T, U>
 #else
 template <typename T, typename U, real128_cpp_op_types_enabler<T, U> = 0>
-constexpr bool operator>=(const T &x, const U &y)
 #endif
+    constexpr bool operator>=(const T &x, const U &y)
 {
-    return dispatch_gte(x, y);
+    return detail::dispatch_gte(x, y);
 }
 
-inline namespace detail
+namespace detail
 {
 template <typename T, enable_if_t<is_real128_mppp_interoperable<T>::value, int> = 0>
 inline bool dispatch_gte(const real128 &x, const T &y)
@@ -3054,19 +3041,19 @@ inline bool dispatch_gte(const T &x, const real128 &y)
  * from the mp++ type.
  */
 #if defined(MPPP_HAVE_CONCEPTS)
-template <typename T>
-inline bool operator>=(const Real128MpppOpTypes<T> &x, const T &y)
+template <typename T, typename U>
+requires Real128MpppOpTypes<T, U>
 #else
 template <typename T, typename U, real128_mppp_op_types_enabler<T, U> = 0>
-inline bool operator>=(const T &x, const U &y)
 #endif
+    inline bool operator>=(const T &x, const U &y)
 {
-    return dispatch_gte(x, y);
+    return detail::dispatch_gte(x, y);
 }
 
 /** @} */
 
-inline namespace detail
+namespace detail
 {
 
 // Functions useful for the implementation of real128 constants below.
@@ -3114,9 +3101,10 @@ constexpr unsigned real128_sig_digits()
  */
 constexpr real128 real128_max()
 {
-    return (18446744073709551615ull * two_112() + 281474976710655ull * two_48() + 1) * two_ptwo<8192>()
-           * two_ptwo<4096>() * two_ptwo<2048>() * two_ptwo<1024>() * two_ptwo<512>() * two_ptwo<256>()
-           * two_ptwo<128>() * two_ptwo<64>() * two_ptwo<32>() * (1ull << 31);
+    return (18446744073709551615ull * detail::two_112() + 281474976710655ull * detail::two_48() + 1)
+           * detail::two_ptwo<8192>() * detail::two_ptwo<4096>() * detail::two_ptwo<2048>() * detail::two_ptwo<1024>()
+           * detail::two_ptwo<512>() * detail::two_ptwo<256>() * detail::two_ptwo<128>() * detail::two_ptwo<64>()
+           * detail::two_ptwo<32>() * (1ull << 31);
 }
 
 /// The smallest positive value representable by \link mppp::real128 real128\endlink with full precision.
@@ -3125,8 +3113,9 @@ constexpr real128 real128_max()
  */
 constexpr real128 real128_min()
 {
-    return 1 / two_ptwo<8192>() / two_ptwo<4096>() / two_ptwo<2048>() / two_ptwo<1024>() / two_ptwo<512>()
-           / two_ptwo<256>() / two_ptwo<128>() / two_ptwo<64>() / two_ptwo<32>() / (1ull << 30);
+    return 1 / detail::two_ptwo<8192>() / detail::two_ptwo<4096>() / detail::two_ptwo<2048>() / detail::two_ptwo<1024>()
+           / detail::two_ptwo<512>() / detail::two_ptwo<256>() / detail::two_ptwo<128>() / detail::two_ptwo<64>()
+           / detail::two_ptwo<32>() / (1ull << 30);
 }
 
 /// The difference between 1 and the next larger number representable by \link mppp::real128 real128\endlink.
@@ -3135,7 +3124,7 @@ constexpr real128 real128_min()
  */
 constexpr real128 real128_epsilon()
 {
-    return 1 / two_ptwo<64>() / two_ptwo<32>() / (1ull << 16);
+    return 1 / detail::two_ptwo<64>() / detail::two_ptwo<32>() / (1ull << 16);
 }
 
 /// The smallest positive denormalized number representable by \link mppp::real128 real128\endlink.
@@ -3144,7 +3133,7 @@ constexpr real128 real128_epsilon()
  */
 constexpr real128 real128_denorm_min()
 {
-    return 1 / two_ptwo<8192>() / two_ptwo<8192>() / two_ptwo<64>() / (1ull << 46);
+    return 1 / detail::two_ptwo<8192>() / detail::two_ptwo<8192>() / detail::two_ptwo<64>() / (1ull << 46);
 }
 
 /// The positive \f$ \infty \f$ constant.
@@ -3189,7 +3178,7 @@ constexpr real128 real128_nan()
  */
 constexpr real128 real128_pi()
 {
-    return 2 * (9541308523256152504ull * two_112() + 160664882791121ull * two_48() + 1);
+    return 2 * (9541308523256152504ull * detail::two_112() + 160664882791121ull * detail::two_48() + 1);
 }
 
 /// The \f$ \mathrm{e} \f$ constant (Euler's number).
@@ -3198,7 +3187,7 @@ constexpr real128 real128_pi()
  */
 constexpr real128 real128_e()
 {
-    return 2 * (10751604932185443962ull * two_112() + 101089180468598ull * two_48() + 1);
+    return 2 * (10751604932185443962ull * detail::two_112() + 101089180468598ull * detail::two_48() + 1);
 }
 
 /// The \f$ \sqrt{2} \f$ constant.
@@ -3207,7 +3196,7 @@ constexpr real128 real128_e()
  */
 constexpr real128 real128_sqrt2()
 {
-    return 14486024992869247637ull * two_112() + 116590752822204ull * two_48() + 1;
+    return 14486024992869247637ull * detail::two_112() + 116590752822204ull * detail::two_48() + 1;
 }
 
 #if MPPP_CPLUSPLUS >= 201703L
@@ -3256,7 +3245,7 @@ inline std::size_t hash(const real128 &x)
 {
     // NOTE: in order to detect if x is zero/nan, resort to reading directly into the ieee fields.
     // This avoids calling the fpclassify() function, which internally invokes a compiler library function.
-    ieee_float128 ief;
+    detail::ieee_float128 ief;
     ief.value = x.m_value;
     const auto is_zero = ief.i_eee.exponent == 0u && ief.i_eee.mant_low == 0u && ief.i_eee.mant_high == 0u;
     const auto is_nan = ief.i_eee.exponent == 32767ul && (ief.i_eee.mant_low != 0u || ief.i_eee.mant_high != 0u);

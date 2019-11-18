@@ -1,4 +1,4 @@
-// Copyright 2016-2018 Francesco Biscani (bluescarni@gmail.com)
+// Copyright 2016-2019 Francesco Biscani (bluescarni@gmail.com)
 //
 // This file is part of the mp++ library.
 //
@@ -10,13 +10,15 @@
 #define MPPP_MPPP_HPP
 
 #include <mp++/config.hpp>
-
 #include <mp++/exceptions.hpp>
 #include <mp++/integer.hpp>
 #include <mp++/rational.hpp>
+#include <mp++/type_name.hpp>
+
 #if defined(MPPP_WITH_MPFR)
 #include <mp++/real.hpp>
 #endif
+
 #if defined(MPPP_WITH_QUADMATH)
 #include <mp++/real128.hpp>
 #endif

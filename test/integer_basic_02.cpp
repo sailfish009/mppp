@@ -1,4 +1,4 @@
-// Copyright 2016-2018 Francesco Biscani (bluescarni@gmail.com)
+// Copyright 2016-2019 Francesco Biscani (bluescarni@gmail.com)
 //
 // This file is part of the mp++ library.
 //
@@ -11,27 +11,28 @@
 #include <atomic>
 #include <cmath>
 #include <cstddef>
-#include <gmp.h>
 #include <iostream>
 #include <limits>
-#include <mp++/detail/type_traits.hpp>
-#include <mp++/integer.hpp>
 #include <random>
 #include <sstream>
 #include <stdexcept>
 #include <string>
-#if MPPP_CPLUSPLUS >= 201703L
-#include <string_view>
-#endif
 #include <thread>
 #include <tuple>
 #include <type_traits>
 #include <utility>
 
-#include "test_utils.hpp"
+#if defined(MPPP_HAVE_STRING_VIEW)
+#include <string_view>
+#endif
 
-#define CATCH_CONFIG_MAIN
+#include <gmp.h>
+
+#include <mp++/detail/type_traits.hpp>
+#include <mp++/integer.hpp>
+
 #include "catch.hpp"
+#include "test_utils.hpp"
 
 static int ntries = 1000;
 
@@ -190,7 +191,7 @@ struct mpz_copy_ass_tester {
     {
         using integer = integer<S::value>;
         integer n;
-        mpz_raii m;
+        detail::mpz_raii m;
         n = &m.m_mpz;
         REQUIRE(lex_cast(n) == "0");
         ::mpz_set_si(&m.m_mpz, 1234);
@@ -208,11 +209,11 @@ struct mpz_copy_ass_tester {
         // Random testing.
         std::atomic<bool> fail(false);
         auto f = [&fail](unsigned u) {
-            std::uniform_int_distribution<long> dist(nl_min<long>(), nl_max<long>());
+            std::uniform_int_distribution<long> dist(detail::nl_min<long>(), detail::nl_max<long>());
             std::uniform_int_distribution<int> sdist(0, 1);
             std::mt19937 eng(static_cast<std::mt19937::result_type>(u + mt_rng_seed));
             for (auto i = 0; i < ntries; ++i) {
-                mpz_raii mpz;
+                detail::mpz_raii mpz;
                 auto tmp = dist(eng);
                 ::mpz_set_si(&mpz.m_mpz, tmp);
                 integer z;
@@ -271,7 +272,7 @@ struct mpz_move_ass_tester {
         // Random testing.
         std::atomic<bool> fail(false);
         auto f = [&fail](unsigned u) {
-            std::uniform_int_distribution<long> dist(nl_min<long>(), nl_max<long>());
+            std::uniform_int_distribution<long> dist(detail::nl_min<long>(), detail::nl_max<long>());
             std::uniform_int_distribution<int> sdist(0, 1);
             std::mt19937 eng(static_cast<std::mt19937::result_type>(u + mt_rng_seed));
             for (auto i = 0; i < ntries; ++i) {
@@ -323,7 +324,7 @@ struct string_ass_tester {
         REQUIRE_THROWS_PREDICATE(n = "", std::invalid_argument, [](const std::invalid_argument &ia) {
             return std::string(ia.what()) == "The string '' is not a valid integer in base 10";
         });
-#if MPPP_CPLUSPLUS >= 201703L
+#if defined(MPPP_HAVE_STRING_VIEW)
         n = std::string_view(" -123 ");
         REQUIRE(n == -123);
         n = std::string_view("4563 ");
@@ -464,27 +465,6 @@ struct stream_tester {
             oss << integer{-123};
             REQUIRE(oss.str() == "-123");
         }
-        {
-            std::stringstream ss;
-            ss << integer{};
-            integer n(12);
-            ss >> n;
-            REQUIRE(n == 0);
-        }
-        {
-            std::stringstream ss;
-            ss << integer{-123};
-            integer n;
-            ss >> n;
-            REQUIRE(n == -123);
-        }
-        {
-            std::stringstream ss;
-            ss.str("-42");
-            integer n;
-            ss >> n;
-            REQUIRE(n == -42);
-        }
     }
 };
 
@@ -533,7 +513,7 @@ struct int_convert_tester {
             using integer = integer<S::value>;
             REQUIRE((is_convertible<integer, Int>::value));
             REQUIRE(roundtrip_conversion<integer>(0));
-            auto constexpr min = nl_min<Int>(), max = nl_max<Int>();
+            auto constexpr min = detail::nl_min<Int>(), max = detail::nl_max<Int>();
             REQUIRE(roundtrip_conversion<integer>(min));
             REQUIRE(roundtrip_conversion<integer>(max));
             REQUIRE(roundtrip_conversion<integer>(Int(42)));
@@ -754,7 +734,7 @@ struct sizes_tester {
         // Static data member.
         REQUIRE(integer::ssize == S::value);
         // Random testing.
-        mpz_raii tmp;
+        detail::mpz_raii tmp;
         std::uniform_int_distribution<int> sdist(0, 1);
         auto random_x = [&](unsigned x) {
             for (int i = 0; i < ntries; ++i) {

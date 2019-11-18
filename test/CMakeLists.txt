@@ -5,6 +5,26 @@ include(YACMACompilerLinkerSettings)
 list(APPEND MPPP_CXX_FLAGS_DEBUG ${YACMA_THREADING_CXX_FLAGS})
 list(APPEND MPPP_CXX_FLAGS_RELEASE ${YACMA_THREADING_CXX_FLAGS})
 
+add_library(mp++_test STATIC catch_main.cpp)
+target_compile_options(mp++_test PRIVATE
+  "$<$<CONFIG:Debug>:${MPPP_CXX_FLAGS_DEBUG}>"
+  "$<$<CONFIG:Release>:${MPPP_CXX_FLAGS_RELEASE}>"
+  "$<$<CONFIG:RelWithDebInfo>:${MPPP_CXX_FLAGS_RELEASE}>"
+  "$<$<CONFIG:MinSizeRel>:${MPPP_CXX_FLAGS_RELEASE}>"
+)
+# Let's setup the target C++ standard, but only if the user did not provide it manually.
+if(NOT CMAKE_CXX_STANDARD)
+  if(MPPP_COMPILER_SUPPORTS_CONCEPTS)
+    # NOTE: the idea here is that we want to use C++14 if the compilers supports
+    # concepts (as variable concepts are essentially template variables).
+    set_property(TARGET mp++_test PROPERTY CXX_STANDARD 14)
+  else()
+    set_property(TARGET mp++_test PROPERTY CXX_STANDARD 11)
+  endif()
+endif()
+set_property(TARGET mp++_test PROPERTY CXX_STANDARD_REQUIRED YES)
+set_property(TARGET mp++_test PROPERTY CXX_EXTENSIONS NO)
+
 function(ADD_MPPP_TESTCASE arg1)
   if(MPPP_TEST_NSPLIT)
     # Increase by one the _MPPP_TEST_NUM variable in the parent scope.
@@ -19,27 +39,25 @@ function(ADD_MPPP_TESTCASE arg1)
     return()
   endif()
   add_executable(${arg1} ${arg1}.cpp)
-  target_link_libraries(${arg1} mp++ Threads::Threads)
-  target_compile_options(${arg1} PRIVATE "$<$<CONFIG:DEBUG>:${MPPP_CXX_FLAGS_DEBUG}>" "$<$<CONFIG:RELEASE>:${MPPP_CXX_FLAGS_RELEASE}>")
-  # NOTE: for clang-cl, cmake tries to set -std=c++11 here, which makes
-  # it error out. Disable it as MSVC 2015 is implicitly C++14 anyway.
-  if(NOT (YACMA_COMPILER_IS_MSVC AND YACMA_COMPILER_IS_CLANGXX))
-    # Let's setup the target C++ standard, but only if the user did not provide it manually.
-    if(NOT CMAKE_CXX_STANDARD)
-      if(MPPP_COMPILER_SUPPORTS_CONCEPTS)
-        # NOTE: the idea here is that we want to use C++14 if the compilers supports
-        # concepts (as variable concepts are essentially template variables).
-        set_property(TARGET ${arg1} PROPERTY CXX_STANDARD 14)
-      else()
-        set_property(TARGET ${arg1} PROPERTY CXX_STANDARD 11)
-      endif()
+  target_link_libraries(${arg1} mp++ mp++_test Threads::Threads)
+  target_compile_options(${arg1} PRIVATE
+    "$<$<CONFIG:Debug>:${MPPP_CXX_FLAGS_DEBUG}>"
+    "$<$<CONFIG:Release>:${MPPP_CXX_FLAGS_RELEASE}>"
+    "$<$<CONFIG:RelWithDebInfo>:${MPPP_CXX_FLAGS_RELEASE}>"
+    "$<$<CONFIG:MinSizeRel>:${MPPP_CXX_FLAGS_RELEASE}>"
+  )
+  # Let's setup the target C++ standard, but only if the user did not provide it manually.
+  if(NOT CMAKE_CXX_STANDARD)
+    if(MPPP_COMPILER_SUPPORTS_CONCEPTS)
+      # NOTE: the idea here is that we want to use C++14 if the compilers supports
+      # concepts (as variable concepts are essentially template variables).
+      set_property(TARGET ${arg1} PROPERTY CXX_STANDARD 14)
+    else()
+      set_property(TARGET ${arg1} PROPERTY CXX_STANDARD 11)
     endif()
-    set_property(TARGET ${arg1} PROPERTY CXX_STANDARD_REQUIRED YES)
-    set_property(TARGET ${arg1} PROPERTY CXX_EXTENSIONS NO)
   endif()
-  # Visibility settings.
-  set_target_properties(${arg1} PROPERTIES CXX_VISIBILITY_PRESET hidden)
-  set_target_properties(${arg1} PROPERTIES VISIBILITY_INLINES_HIDDEN TRUE)
+  set_property(TARGET ${arg1} PROPERTY CXX_STANDARD_REQUIRED YES)
+  set_property(TARGET ${arg1} PROPERTY CXX_EXTENSIONS NO)
   add_test(${arg1} ${arg1})
 endfunction()
 
@@ -78,6 +96,8 @@ ADD_MPPP_TESTCASE(integer_probab_prime_p)
 ADD_MPPP_TESTCASE(integer_rel)
 ADD_MPPP_TESTCASE(integer_roots)
 ADD_MPPP_TESTCASE(integer_set_zero_one)
+ADD_MPPP_TESTCASE(integer_stream_format)
+ADD_MPPP_TESTCASE(integer_swap)
 ADD_MPPP_TESTCASE(integer_tdiv_q)
 ADD_MPPP_TESTCASE(integer_view)
 
@@ -97,12 +117,14 @@ ADD_MPPP_TESTCASE(rational_is_zero_one)
 ADD_MPPP_TESTCASE(rational_neg)
 ADD_MPPP_TESTCASE(rational_pow)
 ADD_MPPP_TESTCASE(rational_rel)
+ADD_MPPP_TESTCASE(rational_stream_format)
 
 if(MPPP_WITH_QUADMATH)
   ADD_MPPP_TESTCASE(real128_arith)
   ADD_MPPP_TESTCASE(real128_basic)
   ADD_MPPP_TESTCASE(real128_comparisons)
   ADD_MPPP_TESTCASE(real128_constants)
+  ADD_MPPP_TESTCASE(real128_fpmanip)
   ADD_MPPP_TESTCASE(real128_hash)
   ADD_MPPP_TESTCASE(real128_ieee)
   ADD_MPPP_TESTCASE(real128_io)
@@ -119,10 +141,12 @@ endif()
 
 if(MPPP_WITH_MPFR)
   ADD_MPPP_TESTCASE(real_arith)
+  ADD_MPPP_TESTCASE(real_bessel)
   ADD_MPPP_TESTCASE(real_basic)
   ADD_MPPP_TESTCASE(real_cmp)
   ADD_MPPP_TESTCASE(real_constants)
   ADD_MPPP_TESTCASE(real_gamma)
+  ADD_MPPP_TESTCASE(real_hyper)
   ADD_MPPP_TESTCASE(real_io)
   ADD_MPPP_TESTCASE(real_logexp)
   ADD_MPPP_TESTCASE(real_neg_abs)
@@ -132,12 +156,13 @@ if(MPPP_WITH_MPFR)
   ADD_MPPP_TESTCASE(real_get_set_z_2exp)
   ADD_MPPP_TESTCASE(real_trig)
   ADD_MPPP_TESTCASE(real_intrem)
+  ADD_MPPP_TESTCASE(real_other_specfunc)
 endif()
 
 if(MPPP_TEST_PYBIND11)
   add_subdirectory(pybind11)
 endif()
 
-ADD_MPPP_TESTCASE(demangle)
+ADD_MPPP_TESTCASE(type_name)
 ADD_MPPP_TESTCASE(utils)
 ADD_MPPP_TESTCASE(type_traits)

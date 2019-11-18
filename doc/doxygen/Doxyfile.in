@@ -793,7 +793,8 @@ WARN_LOGFILE           =
 # spaces. See also FILE_PATTERNS and EXTENSION_MAPPING
 # Note: If this tag is empty the current directory is searched.
 
-INPUT                  = ../../include/
+INPUT                  = ../../include/ \
+                         ../../src/
 
 # This tag can be used to specify the character encoding of the source files
 # that doxygen parses. Internally doxygen uses the UTF-8 encoding. Doxygen uses
@@ -2094,7 +2095,10 @@ PREDEFINED             = MPPP_DOXYGEN_INVOKED \
                          MPPP_WITH_QUADMATH \
                          MPPP_HAVE_CONCEPTS \
                          MPPP_CONSTEXPR_14=constexpr \
-                         MPPP_CPLUSPLUS=201703L
+                         MPPP_CPLUSPLUS=201703L \
+                         MPPP_DLL_PUBLIC= \
+                         MPPP_DLL_LOCAL= \
+                         MPPP_DLL_PUBLIC_INLINE_CLASS=
 
 # If the MACRO_EXPANSION and EXPAND_ONLY_PREDEF tags are set to YES then this
 # tag can be used to specify a list of macro names that should be expanded. The
@@ -2165,7 +2169,7 @@ EXTERNAL_PAGES         = YES
 # interpreter (i.e. the result of 'which perl').
 # The default file (with absolute path) is: /usr/bin/perl.
 
-PERL_PATH              = /usr/bin/perl
+# PERL_PATH              = /usr/bin/perl
 
 #---------------------------------------------------------------------------
 # Configuration options related to the dot tool
@@ -2187,7 +2191,7 @@ CLASS_DIAGRAMS         = NO
 # the mscgen tool resides. If left empty the tool is assumed to be found in the
 # default search path.
 
-MSCGEN_PATH            =
+# MSCGEN_PATH            =
 
 # You can include diagrams made with dia in doxygen documentation. Doxygen will
 # then run dia to produce the diagram and insert it in the documentation. The

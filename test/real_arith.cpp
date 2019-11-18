@@ -1,4 +1,4 @@
-// Copyright 2016-2018 Francesco Biscani (bluescarni@gmail.com)
+// Copyright 2016-2019 Francesco Biscani (bluescarni@gmail.com)
 //
 // This file is part of the mp++ library.
 //
@@ -6,13 +6,12 @@
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-#include <mp++/config.hpp>
-
-#include <mp++/detail/mpfr.hpp>
-#include <mp++/real.hpp>
 #include <utility>
 
-#define CATCH_CONFIG_MAIN
+#include <mp++/config.hpp>
+#include <mp++/detail/mpfr.hpp>
+#include <mp++/real.hpp>
+
 #include "catch.hpp"
 
 using namespace mppp;
@@ -42,45 +41,45 @@ TEST_CASE("real arith nary steal")
 {
     real r1, r2, r3;
     auto p = std::make_pair(static_cast<real *>(nullptr), r1.get_prec());
-    mpfr_nary_op_check_steal(p, r2, r3);
+    detail::mpfr_nary_op_check_steal(p, r2, r3);
     REQUIRE(!p.first);
     REQUIRE(p.second == r1.get_prec());
     r1.set_prec(r1.get_prec() + 1);
     p = std::make_pair(static_cast<real *>(nullptr), r1.get_prec());
-    mpfr_nary_op_check_steal(p, r2, r3);
+    detail::mpfr_nary_op_check_steal(p, r2, r3);
     REQUIRE(!p.first);
     REQUIRE(p.second == r1.get_prec());
     p = std::make_pair(static_cast<real *>(nullptr), r1.get_prec());
-    mpfr_nary_op_check_steal(p, std::move(r2), r3);
+    detail::mpfr_nary_op_check_steal(p, std::move(r2), r3);
     REQUIRE(p.first == &r2);
     REQUIRE(p.second == r1.get_prec());
     p = std::make_pair(static_cast<real *>(nullptr), r1.get_prec());
-    mpfr_nary_op_check_steal(p, r2, std::move(r3));
+    detail::mpfr_nary_op_check_steal(p, r2, std::move(r3));
     REQUIRE(p.first == &r3);
     REQUIRE(p.second == r1.get_prec());
     p = std::make_pair(static_cast<real *>(nullptr), r1.get_prec());
-    mpfr_nary_op_check_steal(p, std::move(r2), std::move(r3));
+    detail::mpfr_nary_op_check_steal(p, std::move(r2), std::move(r3));
     REQUIRE(p.first == &r2);
     REQUIRE(p.second == r1.get_prec());
     p = std::make_pair(&r1, r1.get_prec());
-    mpfr_nary_op_check_steal(p, std::move(r2), std::move(r3));
+    detail::mpfr_nary_op_check_steal(p, std::move(r2), std::move(r3));
     REQUIRE(p.first == &r1);
     REQUIRE(p.second == r1.get_prec());
     p = std::make_pair(&r1, r1.get_prec());
-    mpfr_nary_op_check_steal(p, static_cast<const real &>(r2), r3);
+    detail::mpfr_nary_op_check_steal(p, static_cast<const real &>(r2), r3);
     REQUIRE(p.first == &r1);
     REQUIRE(p.second == r1.get_prec());
     r3.set_prec(r1.get_prec() + 1);
     p = std::make_pair(&r1, r1.get_prec());
-    mpfr_nary_op_check_steal(p, r2, r3);
+    detail::mpfr_nary_op_check_steal(p, r2, r3);
     REQUIRE(p.first == &r1);
     REQUIRE(p.second == r3.get_prec());
     p = std::make_pair(&r1, r1.get_prec());
-    mpfr_nary_op_check_steal(p, r2, std::move(r3));
+    detail::mpfr_nary_op_check_steal(p, r2, std::move(r3));
     REQUIRE(p.first == &r3);
     REQUIRE(p.second == r3.get_prec());
     p = std::make_pair(static_cast<real *>(nullptr), r1.get_prec());
-    mpfr_nary_op_check_steal(p, r2, std::move(r3));
+    detail::mpfr_nary_op_check_steal(p, r2, std::move(r3));
     REQUIRE(p.first == &r3);
     REQUIRE(p.second == r3.get_prec());
 }

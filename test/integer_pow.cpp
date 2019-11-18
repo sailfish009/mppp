@@ -1,4 +1,4 @@
-// Copyright 2016-2018 Francesco Biscani (bluescarni@gmail.com)
+// Copyright 2016-2019 Francesco Biscani (bluescarni@gmail.com)
 //
 // This file is part of the mp++ library.
 //
@@ -8,20 +8,19 @@
 
 #include <cmath>
 #include <cstddef>
-#include <gmp.h>
 #include <limits>
 #include <random>
 #include <stdexcept>
 #include <tuple>
 #include <type_traits>
 
+#include <gmp.h>
+
 #include <mp++/config.hpp>
 #include <mp++/integer.hpp>
 
-#include "test_utils.hpp"
-
-#define CATCH_CONFIG_MAIN
 #include "catch.hpp"
+#include "test_utils.hpp"
 
 static int ntries = 1000;
 
@@ -40,14 +39,14 @@ struct pow_tester {
     {
         using integer = integer<S::value>;
         // Start with all zeroes.
-        mpz_raii m1, m2;
+        detail::mpz_raii m1, m2;
         integer n1, n2;
         ::mpz_pow_ui(&m1.m_mpz, &m2.m_mpz, 0u);
         REQUIRE(&pow_ui(n1, n2, 0) == &n1);
         REQUIRE((lex_cast(n1) == lex_cast(m1)));
         REQUIRE((lex_cast(pow_ui(n2, 0)) == lex_cast(m1)));
         REQUIRE(n1.is_static());
-        mpz_raii tmp;
+        detail::mpz_raii tmp;
         std::uniform_int_distribution<int> sdist(0, 1);
         std::uniform_int_distribution<unsigned> edist(0, 20);
         // Run a variety of tests with operands with x number of limbs.
@@ -59,7 +58,7 @@ struct pow_tester {
                 }
                 random_integer(tmp, x, rng);
                 ::mpz_set(&m2.m_mpz, &tmp.m_mpz);
-                n2 = integer(mpz_to_str(&tmp.m_mpz));
+                n2 = integer(detail::mpz_to_str(&tmp.m_mpz));
                 if (sdist(rng)) {
                     ::mpz_neg(&m2.m_mpz, &m2.m_mpz);
                     n2.neg();
@@ -88,6 +87,8 @@ struct pow_tester {
 
         // Tests for the convenience pow() overloads.
         REQUIRE(pow(integer{0}, 0) == 1);
+        REQUIRE(pow(integer{0}, false) == 1);
+        REQUIRE(pow(integer{3}, true) == 3);
         REQUIRE(pow(0, integer{0}) == 1);
         REQUIRE((std::is_same<integer, decltype(pow(integer{0}, 0))>::value));
         REQUIRE((std::is_same<integer, decltype(pow(0, integer{0}))>::value));
@@ -115,21 +116,21 @@ struct pow_tester {
                                          return oe.what()
                                                 == "Cannot convert the integral value "
                                                        + std::to_string(std::numeric_limits<unsigned long long>::max())
-                                                       + " to unsigned long: the value is too large.";
+                                                       + " to unsigned long: the value is too large";
                                      });
             REQUIRE_THROWS_PREDICATE(pow(integer{-4}, integer{std::numeric_limits<unsigned long long>::max()}),
                                      std::overflow_error, [](const std::overflow_error &oe) {
                                          return oe.what()
                                                 == "Cannot convert the integral value "
                                                        + std::to_string(std::numeric_limits<unsigned long long>::max())
-                                                       + " to unsigned long: the value is too large.";
+                                                       + " to unsigned long: the value is too large";
                                      });
             REQUIRE_THROWS_PREDICATE(pow(-4, integer{std::numeric_limits<unsigned long long>::max()}),
                                      std::overflow_error, [](const std::overflow_error &oe) {
                                          return oe.what()
                                                 == "Cannot convert the integral value "
                                                        + std::to_string(std::numeric_limits<unsigned long long>::max())
-                                                       + " to unsigned long: the value is too large.";
+                                                       + " to unsigned long: the value is too large";
                                      });
         }
         REQUIRE_THROWS_PREDICATE(pow(integer{0}, -1), zero_division_error, [](const zero_division_error &zde) {

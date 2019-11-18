@@ -1,4 +1,4 @@
-// Copyright 2016-2018 Francesco Biscani (bluescarni@gmail.com)
+// Copyright 2016-2019 Francesco Biscani (bluescarni@gmail.com)
 //
 // This file is part of the mp++ library.
 //
@@ -6,13 +6,12 @@
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-#define CATCH_CONFIG_MAIN
-#include "catch.hpp"
+#include <utility>
 
 #include <mp++/detail/mpfr.hpp>
 #include <mp++/real.hpp>
-#include <utility>
 
+#include "catch.hpp"
 #include "test_utils.hpp"
 
 using namespace mppp;
@@ -21,11 +20,11 @@ TEST_CASE("real sqrt")
 {
     real r0{0};
     r0.sqrt();
-    REQUIRE(r0.get_prec() == real_deduce_precision(0));
+    REQUIRE(r0.get_prec() == detail::real_deduce_precision(0));
     REQUIRE(r0.zero_p());
     real rop;
     REQUIRE(sqrt(rop, r0).zero_p());
-    REQUIRE(rop.get_prec() == real_deduce_precision(0));
+    REQUIRE(rop.get_prec() == detail::real_deduce_precision(0));
     REQUIRE(sqrt(r0).zero_p());
     REQUIRE(sqrt(std::move(r0)).zero_p());
     REQUIRE(!r0.get_mpfr_t()->_mpfr_d);
@@ -48,11 +47,11 @@ TEST_CASE("real rec_sqrt")
 {
     real r0{1};
     r0.rec_sqrt();
-    REQUIRE(r0.get_prec() == real_deduce_precision(0));
+    REQUIRE(r0.get_prec() == detail::real_deduce_precision(0));
     REQUIRE(r0 == 1);
     real rop;
     REQUIRE(rec_sqrt(rop, r0) == 1);
-    REQUIRE(rop.get_prec() == real_deduce_precision(0));
+    REQUIRE(rop.get_prec() == detail::real_deduce_precision(0));
     REQUIRE(rec_sqrt(r0) == 1);
     REQUIRE(rec_sqrt(std::move(r0)) == 1);
     REQUIRE(!r0.get_mpfr_t()->_mpfr_d);
@@ -79,11 +78,11 @@ TEST_CASE("real cbrt")
 {
     real r0{0};
     r0.cbrt();
-    REQUIRE(r0.get_prec() == real_deduce_precision(0));
+    REQUIRE(r0.get_prec() == detail::real_deduce_precision(0));
     REQUIRE(r0.zero_p());
     real rop;
     REQUIRE(cbrt(rop, r0).zero_p());
-    REQUIRE(rop.get_prec() == real_deduce_precision(0));
+    REQUIRE(rop.get_prec() == detail::real_deduce_precision(0));
     REQUIRE(cbrt(r0).zero_p());
     REQUIRE(cbrt(std::move(r0)).zero_p());
     REQUIRE(!r0.get_mpfr_t()->_mpfr_d);
@@ -106,7 +105,7 @@ TEST_CASE("real rootn_ui")
     real r0{0};
     real rop;
     REQUIRE(rootn_ui(rop, r0, 3).zero_p());
-    REQUIRE(rop.get_prec() == real_deduce_precision(0));
+    REQUIRE(rop.get_prec() == detail::real_deduce_precision(0));
     REQUIRE(rootn_ui(r0, 3).zero_p());
     REQUIRE(rootn_ui(std::move(r0), 3).zero_p());
     REQUIRE(!r0.get_mpfr_t()->_mpfr_d);

@@ -1,4 +1,4 @@
-// Copyright 2016-2018 Francesco Biscani (bluescarni@gmail.com)
+// Copyright 2016-2019 Francesco Biscani (bluescarni@gmail.com)
 //
 // This file is part of the mp++ library.
 //
@@ -8,17 +8,16 @@
 
 #include <cstddef>
 #include <functional>
-#include <gmp.h>
 #include <random>
 #include <tuple>
 #include <type_traits>
 
+#include <gmp.h>
+
 #include <mp++/rational.hpp>
 
-#include "test_utils.hpp"
-
-#define CATCH_CONFIG_MAIN
 #include "catch.hpp"
+#include "test_utils.hpp"
 
 static int ntries = 1000;
 
@@ -50,8 +49,8 @@ struct hash_tester {
         n1._get_num().demote();
         REQUIRE((hash(n1) == orig_h));
         REQUIRE((hasher(n1) == orig_h));
-        mpq_raii tmp;
-        mpz_raii num, den;
+        detail::mpq_raii tmp;
+        detail::mpz_raii num, den;
         std::uniform_int_distribution<int> sdist(0, 1);
         // Run a variety of tests with operands with x number of limbs.
         auto random_xy = [&](unsigned x) {

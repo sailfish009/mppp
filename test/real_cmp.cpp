@@ -1,4 +1,4 @@
-// Copyright 2016-2018 Francesco Biscani (bluescarni@gmail.com)
+// Copyright 2016-2019 Francesco Biscani (bluescarni@gmail.com)
 //
 // This file is part of the mp++ library.
 //
@@ -6,18 +6,16 @@
 // Public License v. 2.0. If a copy of the MPL was not distributed
 // with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-#include <mp++/config.hpp>
-
-#include <mp++/detail/mpfr.hpp>
-#include <mp++/real.hpp>
 #include <stdexcept>
 #include <string>
 #include <utility>
 
-#include "test_utils.hpp"
+#include <mp++/config.hpp>
+#include <mp++/detail/mpfr.hpp>
+#include <mp++/real.hpp>
 
-#define CATCH_CONFIG_MAIN
 #include "catch.hpp"
+#include "test_utils.hpp"
 
 using namespace mppp;
 using namespace mppp_test;
@@ -32,8 +30,6 @@ TEST_CASE("real naninf")
     REQUIRE(number_p(real{12}));
     REQUIRE(!real{12}.zero_p());
     REQUIRE(!zero_p(real{12}));
-    REQUIRE(!real{12}.is_zero());
-    REQUIRE(!is_zero(real{12}));
     REQUIRE(real{12}.regular_p());
     REQUIRE(regular_p(real{12}));
 
@@ -45,8 +41,6 @@ TEST_CASE("real naninf")
     REQUIRE(number_p(real{}));
     REQUIRE(real{}.zero_p());
     REQUIRE(zero_p(real{}));
-    REQUIRE(real{}.is_zero());
-    REQUIRE(is_zero(real{}));
     REQUIRE(!real{}.regular_p());
     REQUIRE(!regular_p(real{}));
 
@@ -59,8 +53,6 @@ TEST_CASE("real naninf")
     REQUIRE(!number_p(real{"nan"}));
     REQUIRE(!real{"nan"}.zero_p());
     REQUIRE(!zero_p(real{"nan"}));
-    REQUIRE(!real{"nan"}.is_zero());
-    REQUIRE(!is_zero(real{"nan"}));
     REQUIRE(!real{"nan"}.regular_p());
     REQUIRE(!regular_p(real{"nan"}));
 
@@ -72,8 +64,6 @@ TEST_CASE("real naninf")
     REQUIRE(!number_p(real{"inf"}));
     REQUIRE(!real{"inf"}.zero_p());
     REQUIRE(!zero_p(real{"inf"}));
-    REQUIRE(!real{"inf"}.is_zero());
-    REQUIRE(!is_zero(real{"inf"}));
     REQUIRE(!real{"inf"}.regular_p());
     REQUIRE(!regular_p(real{"-inf"}));
     real_reset_default_prec();
